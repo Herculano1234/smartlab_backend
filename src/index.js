@@ -94,20 +94,39 @@ app.get("/tabelas", async (req, res) => {
 // Authentication (basic)
 // --------------------
 // NOTE: For production add JWT, sessions and stricter validation.
+// Register endpoint: create a professor (administrative) or instruct to use /estagiarios
 app.post("/auth/register", async (req, res) => {
   try {
-    const { username, email, password, role = "estagiario" } = req.body;
+    const { username, email, password, role = "estagiario", genero } = req.body;
     if (!username || !email || !password) {
       return res.status(400).json({ error: "username, email and password required" });
     }
-    const hashed = await bcrypt.hash(password, 10);
-    const [result] = await pool.query(
-      "INSERT INTO usuarios (username, email, password_hash, role) VALUES (?, ?, ?, ?)",
-      [username, email, hashed, role]
-    );
-    return res.status(201).json({ id: result.insertId, username, email, role });
+
+    if (role === "estagiario") {
+      // estagiários should be created via /estagiarios which expects full profile data
+      return res.status(400).json({ error: "Use /estagiarios para cadastrar estagiários com perfil completo" });
+    }
+
+    if (role === "professor") {
+      // For professor creation require genero as it's NOT NULL in schema
+      if (!genero) return res.status(400).json({ error: "genero é obrigatório para professor" });
+      const hashed = await bcrypt.hash(password, 10);
+      // allow optional photo
+      const foto = req.body.foto || req.body.fotoPerfil || null;
+      try {
+        const [result] = await pool.query(
+          "INSERT INTO professores (nome, genero, email, password_hash, foto) VALUES (?, ?, ?, ?, ?)",
+          [username, genero, email, hashed, foto]
+        );
+        return res.status(201).json({ id: result.insertId, nome: username, email, role });
+      } catch (err) {
+        if (err.code === "ER_DUP_ENTRY") return res.status(409).json({ error: "Email já cadastrado" });
+        return handleError(res, err);
+      }
+    }
+
+    return res.status(400).json({ error: "role inválida" });
   } catch (err) {
-    if (err.code === "ER_DUP_ENTRY") return res.status(409).json({ error: "Email ou username já cadastrado" });
     return handleError(res, err);
   }
 });
@@ -116,13 +135,25 @@ app.post("/auth/login", async (req, res) => {
   try {
     const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ error: "email and password required" });
-    const [rows] = await pool.query("SELECT id, username, email, password_hash, role FROM usuarios WHERE email = ?", [email]);
-    const user = rows[0];
-    if (!user) return res.status(401).json({ error: "Credenciais inválidas" });
-    const ok = await bcrypt.compare(password, user.password_hash);
-    if (!ok) return res.status(401).json({ error: "Credenciais inválidas" });
-    // For now return basic user info. Replace with JWT in production.
-    return res.json({ id: user.id, username: user.username, email: user.email, role: user.role });
+    // Try professores first
+    const [profRows] = await pool.query("SELECT id, nome, email, password_hash FROM professores WHERE email = ?", [email]);
+    if (profRows.length) {
+      const prof = profRows[0];
+      const ok = await bcrypt.compare(password, prof.password_hash);
+      if (!ok) return res.status(401).json({ error: "Credenciais inválidas" });
+      return res.json({ id: prof.id, username: prof.nome, email: prof.email, role: "professor" });
+    }
+
+    // Then try estagiarios
+    const [estRows] = await pool.query("SELECT id, nome, email, password_hash FROM estagiarios WHERE email = ?", [email]);
+    if (estRows.length) {
+      const est = estRows[0];
+      const ok = await bcrypt.compare(password, est.password_hash);
+      if (!ok) return res.status(401).json({ error: "Credenciais inválidas" });
+      return res.json({ id: est.id, username: est.nome, email: est.email, role: "estagiario" });
+    }
+
+    return res.status(401).json({ error: "Credenciais inválidas" });
   } catch (err) {
     return handleError(res, err);
   }
@@ -149,9 +180,26 @@ app.get("/estagiarios/:id", async (req, res) => {
 app.post("/estagiarios", async (req, res) => {
   try {
     const body = clean(req.body);
+    // Accept photo sent as 'fotoPerfil' from frontend and map to 'foto' DB column
+    if (body.fotoPerfil) {
+      body.foto = body.fotoPerfil;
+      delete body.fotoPerfil;
+    }
     // minimal required fields validation
-    const required = ["nome", "data_nascimento", "genero", "numero_processo", "curso"];
+    const required = ["nome", "data_nascimento", "genero", "numero_processo", "curso", "password"];
     for (const f of required) if (!body[f]) return res.status(400).json({ error: `${f} é obrigatório` });
+
+    // If a plain password was provided, hash it here and store under password_hash
+    if (body.password) {
+      try {
+        const hashed = await bcrypt.hash(body.password, 10);
+        body.password_hash = hashed;
+      } catch (hashErr) {
+        console.error('Erro ao hashar senha do estagiário', hashErr);
+        return res.status(500).json({ error: 'Erro interno ao processar senha' });
+      }
+      delete body.password;
+    }
 
     const [result] = await pool.query("INSERT INTO estagiarios SET ?", [body]);
     const [row] = await pool.query("SELECT * FROM estagiarios WHERE id = ?", [result.insertId]);
@@ -165,6 +213,10 @@ app.post("/estagiarios", async (req, res) => {
 app.put("/estagiarios/:id", async (req, res) => {
   try {
     const body = clean(req.body);
+    if (body.fotoPerfil) {
+      body.foto = body.fotoPerfil;
+      delete body.fotoPerfil;
+    }
     await pool.query("UPDATE estagiarios SET ? WHERE id = ?", [body, req.params.id]);
     const [row] = await pool.query("SELECT * FROM estagiarios WHERE id = ?", [req.params.id]);
     res.json(row[0]);
@@ -215,6 +267,11 @@ app.get("/professores/:id", async (req, res) => {
 app.post("/professores", async (req, res) => {
   try {
     const body = clean(req.body);
+    // Accept photo sent as 'fotoPerfil' from frontend
+    if (body.fotoPerfil) {
+      body.foto = body.fotoPerfil;
+      delete body.fotoPerfil;
+    }
     if (!body.nome || !body.email) return res.status(400).json({ error: "nome e email obrigatórios" });
     const [result] = await pool.query("INSERT INTO professores SET ?", [body]);
     const [row] = await pool.query("SELECT * FROM professores WHERE id = ?", [result.insertId]);

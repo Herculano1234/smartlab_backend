@@ -1,3 +1,4 @@
+-- INÍCIO DO SCRIPT SQL PARA INICIALIZAÇÃO DO BANCO DE DADOS
 -- ===========================
 -- TABELA: Professores
 -- ===========================
@@ -8,7 +9,9 @@ CREATE TABLE IF NOT EXISTS professores (
   disciplina VARCHAR(100),
   telefone VARCHAR(20),
   email VARCHAR(100) UNIQUE,
+  foto TEXT,
   cargo_instituicao VARCHAR(100),
+  password_hash VARCHAR(255) NOT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -48,6 +51,7 @@ CREATE TABLE IF NOT EXISTS estagiarios (
   morada TEXT,
   telefone VARCHAR(20),
   email VARCHAR(100) UNIQUE,
+  foto TEXT,
   escola_origem VARCHAR(100),
   numero_processo VARCHAR(50) UNIQUE,
   curso VARCHAR(100),
@@ -57,6 +61,7 @@ CREATE TABLE IF NOT EXISTS estagiarios (
   estado_estagio ENUM('Pendente', 'Decorrendo', 'Terminado') DEFAULT 'Pendente',
   data_inicio_estado DATE,
   id_professor INT NULL,
+  password_hash VARCHAR(255) NOT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_estagiarios_professor FOREIGN KEY (id_professor)
     REFERENCES professores(id) ON DELETE SET NULL
@@ -125,18 +130,6 @@ CREATE TABLE IF NOT EXISTS historico_estagio (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ===========================
--- TABELA: Usuários
--- ===========================
-CREATE TABLE IF NOT EXISTS usuarios (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  username VARCHAR(100) NOT NULL UNIQUE,
-  email VARCHAR(150) NOT NULL UNIQUE,
-  password_hash VARCHAR(255) NOT NULL,
-  role VARCHAR(50) DEFAULT 'estagiario',
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- ===========================
 -- TABELA: Logs de Auditoria
 -- ===========================
 CREATE TABLE IF NOT EXISTS logs (
@@ -145,4 +138,5 @@ CREATE TABLE IF NOT EXISTS logs (
   acao TEXT,
   data_hora TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- FIM DO SCRIPT SQL PARA INICIALIZAÇÃO DO BANCO DE DADOS
