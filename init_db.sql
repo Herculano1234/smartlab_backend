@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS professores (
   disciplina VARCHAR(100),
   telefone VARCHAR(20),
   email VARCHAR(100) UNIQUE,
-  foto TEXT,
+  foto LONGTEXT,
   cargo_instituicao VARCHAR(100),
   password_hash VARCHAR(255) NOT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS estagiarios (
   morada TEXT,
   telefone VARCHAR(20),
   email VARCHAR(100) UNIQUE,
-  foto TEXT,
+  foto LONGTEXT,
   escola_origem VARCHAR(100),
   numero_processo VARCHAR(50) UNIQUE,
   curso VARCHAR(100),

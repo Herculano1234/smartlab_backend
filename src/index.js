@@ -464,5 +464,19 @@ app.get("/dashboard", async (req, res) => {
 // --------------------
 // Start server
 // --------------------
+// Admin migration endpoint: alter foto columns to LONGTEXT on demand
+// WARNING: Enabled only if ALLOW_MIGRATE=true in env (safety)
+app.post('/admin/migrate/foto-columns', async (req, res) => {
+  try {
+    if (process.env.ALLOW_MIGRATE !== 'true') return res.status(403).json({ error: 'Migration not allowed' });
+    // multipleStatements is enabled on pool, run both alters
+    await pool.query('ALTER TABLE professores MODIFY foto LONGTEXT; ALTER TABLE estagiarios MODIFY foto LONGTEXT;');
+    return res.json({ ok: true, message: 'Migration executed' });
+  } catch (err) {
+    console.error('Migration error', err);
+    return res.status(500).json({ error: 'Migration failed', details: err.message });
+  }
+});
+
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 4000;
 app.listen(PORT, () => console.log(`Smart Lab API rodando na porta ${PORT}`));
