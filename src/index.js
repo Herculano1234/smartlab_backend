@@ -42,7 +42,31 @@ const clean = (obj) => {
   });
   return out;
 };
-
+// Endpoint raiz para verificar status do servidor
+app.get("/", (req, res) => {
+  res.send("Servidor rodando");
+});
+// Endpoint para listar todas as tabelas do banco de dados
+app.get("/tabelas", async (req, res) => {
+  try {
+    const [rows] = await pool.query("SHOW TABLES");
+    
+    // Extrai o nome das tabelas (a chave depende do nome do banco)
+    const tabelas = rows.map(row => Object.values(row)[0]);
+    
+    res.json({
+      sucesso: true,
+      total: tabelas.length,
+      tabelas
+    });
+  } catch (err) {
+    console.error("Erro ao listar tabelas:", err.message);
+    res.status(500).json({
+      sucesso: false,
+      erro: "Erro ao listar tabelas do banco de dados."
+    });
+  }
+});
 // --------------------
 // Authentication (basic)
 // --------------------
