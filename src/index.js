@@ -4,7 +4,9 @@ import cors from "cors";
 import dotenv from "dotenv";
 import mysql from "mysql2/promise";
 import bcrypt from "bcryptjs";
-
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 dotenv.config();
 const app = express();
 app.use(cors());
@@ -25,6 +27,26 @@ const pool = mysql.createPool({
   ssl: { rejectUnauthorized: false },
 });
 
+// Corrigir __dirname (pois em ES Modules ele não existe direto)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+async function initDatabase() {
+  try {
+    // Sobe uma pasta (de /src para /)
+    const sqlPath = path.join(__dirname, "../init_db.sql");
+    const sql = fs.readFileSync(sqlPath, "utf8");
+
+    console.log("🟢 Inicializando o banco de dados...");
+    await pool.query(sql);
+    console.log("✅ Banco de dados inicializado com sucesso!");
+  } catch (err) {
+    console.error("❌ Erro ao inicializar o banco de dados:", err.message);
+  }
+}
+
+// Chama antes de iniciar o servidor
+await initDatabase();
 // --------------------
 // Helpers
 // --------------------
