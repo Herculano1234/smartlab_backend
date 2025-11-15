@@ -40,6 +40,7 @@ async function initDatabase() {
 
     console.log("🟢 Inicializando o banco de dados...");
     await pool.query(sql);
+    
     console.log("✅ Banco de dados inicializado com sucesso!");
   } catch (err) {
     console.error("❌ Erro ao inicializar o banco de dados:", err.message);

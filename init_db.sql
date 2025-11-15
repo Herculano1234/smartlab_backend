@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS tipos_materiais (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+
 -- ===========================
 -- TABELA: Visitas
 -- ===========================
@@ -138,5 +139,4 @@ CREATE TABLE IF NOT EXISTS logs (
   acao TEXT,
   data_hora TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
 -- FIM DO SCRIPT SQL PARA INICIALIZAÇÃO DO BANCO DE DADOS
