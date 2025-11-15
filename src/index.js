@@ -326,6 +326,7 @@ app.get("/materiais", async (req, res) => {
   catch (err) { handleError(res, err); }
 });
 
+
 app.get("/materiais/:id", async (req, res) => {
   try { const [rows] = await pool.query("SELECT * FROM materiais WHERE id = ?", [req.params.id]); if (!rows.length) return res.status(404).json({ error: "Material não encontrado" }); res.json(rows[0]); }
   catch (err) { handleError(res, err); }
@@ -334,6 +335,20 @@ app.get("/materiais/:id", async (req, res) => {
 app.post("/materiais", async (req, res) => {
   try { const body = clean(req.body); const [result] = await pool.query("INSERT INTO materiais SET ?", [body]); const [row] = await pool.query("SELECT * FROM materiais WHERE id = ?", [result.insertId]); res.status(201).json(row[0]); }
   catch (err) { handleError(res, err); }
+});
+app.get("/add_materiais", async (req, res) => {
+  try {
+    const valores = [];
+
+    const [result] = await pool.query(
+      "INSERT INTO tipos_materiais (nome_tipo) VALUES ?",
+      [valores.map(v => [v.nome_tipo])]
+    );
+
+    res.send(`Inserção concluída! Registros inseridos: ${result.affectedRows}`);
+  } catch (err) {
+    handleError(res, err);
+  }
 });
 
 app.put("/materiais/:id", async (req, res) => {
@@ -346,8 +361,8 @@ app.delete("/materiais/:id", async (req, res) => {
   catch (err) { handleError(res, err); }
 });
 
-app.get("/materiais/tipos", async (req, res) => {
-  try { const [rows] = await pool.query("SELECT * FROM tipos_materiais ORDER BY id"); res.json(rows); }
+app.get("/tipo_material", async (req, res) => {
+  try { const [rows] = await pool.query("SELECT * FROM tipos_materiais ORDER BY id DESC"); res.json(rows); }
   catch (err) { handleError(res, err); }
 });
 
