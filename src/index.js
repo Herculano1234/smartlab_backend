@@ -1,4 +1,3 @@
-// index.js
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -549,6 +548,21 @@ app.get("/add_materiais", async (req, res) => {
     handleError(res, err);
   }
 });
+app.get('/obter_hash', async (req, res) => {
+  try {
+    const plain = '1234567890aA';
+    const saltRounds = 10;
+    const hash = await bcrypt.hash(plain, saltRounds);
+
+    // Se quiser também guardar o hash no BD, descomente e ajuste a query abaixo:
+    // await pool.query('INSERT INTO hashes_gerados (texto_original, hash) VALUES (?, ?)', [plain, hash]);
+
+    res.json({ hash });
+  } catch (err) {
+    handleError(res, err);
+  }
+});
+
 
 app.put("/materiais/:id", async (req, res) => {
   try { const body = clean(req.body); await pool.query("UPDATE materiais SET ? WHERE id = ?", [body, req.params.id]); const [row] = await pool.query("SELECT * FROM materiais WHERE id = ?", [req.params.id]); res.json(row[0]); }
