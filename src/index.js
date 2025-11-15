@@ -333,8 +333,28 @@ app.get("/materiais/:id", async (req, res) => {
 });
 
 app.post("/materiais", async (req, res) => {
-  try { const body = clean(req.body); const [result] = await pool.query("INSERT INTO materiais SET ?", [body]); const [row] = await pool.query("SELECT * FROM materiais WHERE id = ?", [result.insertId]); res.status(201).json(row[0]); }
-  catch (err) { handleError(res, err); }
+  try {
+    const body = clean(req.body);
+
+    // Basic validation to provide clearer errors instead of generic 500
+    if (!body.nome_material || !body.code_id) {
+      return res.status(400).json({ error: "nome_material e code_id são obrigatórios" });
+    }
+
+    try {
+      const [result] = await pool.query("INSERT INTO materiais SET ?", [body]);
+      const [row] = await pool.query("SELECT * FROM materiais WHERE id = ?", [result.insertId]);
+      return res.status(201).json(row[0]);
+    } catch (err) {
+      // Handle duplicate key errors more gracefully
+      if (err && err.code === 'ER_DUP_ENTRY') {
+        // Try to provide a helpful message when code_id or other unique constraint is violated
+        const msg = err.message || 'Entrada duplicada';
+        return res.status(409).json({ error: `Duplicata: ${msg}` });
+      }
+      throw err;
+    }
+  } catch (err) { handleError(res, err); }
 });
 app.get("/add_materiais", async (req, res) => {
   try {
