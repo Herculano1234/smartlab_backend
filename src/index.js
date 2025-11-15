@@ -308,9 +308,29 @@ app.post("/auth/register", async (req, res) => {
 
 app.post("/auth/login", async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, perfil } = req.body;
     if (!email || !password) return res.status(400).json({ error: "email and password required" });
-    // Try professores first
+
+    // If frontend explicitly requests a perfil, only check that table
+    if (perfil === "professor") {
+      const [profRows] = await pool.query("SELECT id, nome, email, password_hash FROM professores WHERE email = ?", [email]);
+      if (!profRows.length) return res.status(401).json({ error: "Credenciais inválidas" });
+      const prof = profRows[0];
+      const ok = await bcrypt.compare(password, prof.password_hash);
+      if (!ok) return res.status(401).json({ error: "Credenciais inválidas" });
+      return res.json({ id: prof.id, username: prof.nome, email: prof.email, role: "professor" });
+    }
+
+    if (perfil === "estagiario") {
+      const [estRows] = await pool.query("SELECT id, nome, email, password_hash FROM estagiarios WHERE email = ?", [email]);
+      if (!estRows.length) return res.status(401).json({ error: "Credenciais inválidas" });
+      const est = estRows[0];
+      const ok = await bcrypt.compare(password, est.password_hash);
+      if (!ok) return res.status(401).json({ error: "Credenciais inválidas" });
+      return res.json({ id: est.id, username: est.nome, email: est.email, role: "estagiario" });
+    }
+
+    // Backwards-compatible: try professores first, then estagiarios
     const [profRows] = await pool.query("SELECT id, nome, email, password_hash FROM professores WHERE email = ?", [email]);
     if (profRows.length) {
       const prof = profRows[0];
@@ -319,7 +339,6 @@ app.post("/auth/login", async (req, res) => {
       return res.json({ id: prof.id, username: prof.nome, email: prof.email, role: "professor" });
     }
 
-    // Then try estagiarios
     const [estRows] = await pool.query("SELECT id, nome, email, password_hash FROM estagiarios WHERE email = ?", [email]);
     if (estRows.length) {
       const est = estRows[0];
