@@ -91,6 +91,228 @@ app.get("/tabelas", async (req, res) => {
     });
   }
 });
+
+// --------------------
+// Endpoints RFID para Integração com ESP32
+// --------------------
+
+// Endpoint para buscar estagiário por UID RFID
+app.get("/rfid/estagiario/:uid", async (req, res) => {
+  try {
+    const { uid } = req.params;
+    
+    const [rows] = await pool.query(
+      "SELECT id, nome, email, numero_processo, curso, foto, rfid_uid FROM estagiarios WHERE rfid_uid = ?", 
+      [uid]
+    );
+    
+    if (!rows.length) {
+      return res.status(404).json({ 
+        autorizado: false, 
+        mensagem: "Cartão não cadastrado" 
+      });
+    }
+    
+    res.json({
+      autorizado: true,
+      mensagem: "Acesso liberado",
+      estagiario: rows[0]
+    });
+  } catch (err) {
+    handleError(res, err);
+  }
+});
+
+// Endpoint para cadastrar/atualizar UID RFID no estagiário
+app.post("/rfid/estagiario/cadastrar", async (req, res) => {
+  try {
+    const { uid, estagiario_id } = req.body;
+    
+    if (!uid || !estagiario_id) {
+      return res.status(400).json({ 
+        error: "UID e estagiario_id são obrigatórios" 
+      });
+    }
+    
+    // Verifica se o UID já está em uso por outro estagiário
+    const [existing] = await pool.query(
+      "SELECT id FROM estagiarios WHERE rfid_uid = ? AND id != ?", 
+      [uid, estagiario_id]
+    );
+    
+    if (existing.length > 0) {
+      return res.status(409).json({ 
+        error: "Este cartão RFID já está em uso por outro estagiário" 
+      });
+    }
+    
+    // Atualiza o estagiário com o UID RFID
+    await pool.query(
+      "UPDATE estagiarios SET rfid_uid = ? WHERE id = ?", 
+      [uid, estagiario_id]
+    );
+    
+    // Busca os dados atualizados
+    const [rows] = await pool.query(
+      "SELECT id, nome, email, numero_processo, curso, foto, rfid_uid FROM estagiarios WHERE id = ?", 
+      [estagiario_id]
+    );
+    
+    res.json({
+      sucesso: true,
+      mensagem: "Cartão RFID cadastrado com sucesso",
+      estagiario: rows[0]
+    });
+  } catch (err) {
+    handleError(res, err);
+  }
+});
+
+// Endpoint para registrar presença via RFID
+app.post("/rfid/presenca", async (req, res) => {
+  try {
+    const { uid } = req.body;
+    
+    if (!uid) {
+      return res.status(400).json({ 
+        error: "UID é obrigatório" 
+      });
+    }
+    
+    // Busca estagiário pelo UID
+    const [estagiarios] = await pool.query(
+      "SELECT id, nome FROM estagiarios WHERE rfid_uid = ?", 
+      [uid]
+    );
+    
+    if (!estagiarios.length) {
+      return res.status(404).json({ 
+        autorizado: false, 
+        mensagem: "Cartão não cadastrado" 
+      });
+    }
+    
+    const estagiario = estagiarios[0];
+    const hoje = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    const agora = new Date().toTimeString().split(' ')[0]; // HH:MM:SS
+    
+    // Verifica se já existe registro de presença hoje
+    const [presencas] = await pool.query(
+      "SELECT id, hora_entrada, hora_saida FROM presencas WHERE estagiario_id = ? AND data = ?", 
+      [estagiario.id, hoje]
+    );
+    
+    let resultado;
+    
+    if (presencas.length === 0) {
+      // Primeira entrada do dia - cria novo registro
+      const [result] = await pool.query(
+        "INSERT INTO presencas (estagiario_id, data, hora_entrada) VALUES (?, ?, ?)", 
+        [estagiario.id, hoje, agora]
+      );
+      resultado = {
+        tipo: "entrada",
+        mensagem: `Entrada registrada para ${estagiario.nome}`,
+        horario: agora
+      };
+    } else {
+      const presenca = presencas[0];
+      
+      if (!presenca.hora_saida) {
+        // Já tem entrada, registra saída
+        await pool.query(
+          "UPDATE presencas SET hora_saida = ? WHERE id = ?", 
+          [agora, presenca.id]
+        );
+        resultado = {
+          tipo: "saida",
+          mensagem: `Saída registrada para ${estagiario.nome}`,
+          horario: agora
+        };
+      } else {
+        // Já tem entrada e saída, cria nova entrada (turno extra)
+        const [result] = await pool.query(
+          "INSERT INTO presencas (estagiario_id, data, hora_entrada) VALUES (?, ?, ?)", 
+          [estagiario.id, hoje, agora]
+        );
+        resultado = {
+          tipo: "entrada_extra",
+          mensagem: `Nova entrada registrada para ${estagiario.nome}`,
+          horario: agora
+        };
+      }
+    }
+    
+    res.json({
+      autorizado: true,
+      estagiario: {
+        id: estagiario.id,
+        nome: estagiario.nome
+      },
+      ...resultado
+    });
+  } catch (err) {
+    handleError(res, err);
+  }
+});
+
+// Endpoint para listar todos os UIDs RFID cadastrados
+app.get("/rfid/cartoes", async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      "SELECT id, nome, rfid_uid FROM estagiarios WHERE rfid_uid IS NOT NULL ORDER BY nome"
+    );
+    
+    res.json({
+      total: rows.length,
+      cartoes: rows
+    });
+  } catch (err) {
+    handleError(res, err);
+  }
+});
+
+// Endpoint para remover UID RFID de um estagiário
+app.delete("/rfid/estagiario/:id/cartao", async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    await pool.query(
+      "UPDATE estagiarios SET rfid_uid = NULL WHERE id = ?", 
+      [id]
+    );
+    
+    res.json({
+      sucesso: true,
+      mensagem: "Cartão RFID removido com sucesso"
+    });
+  } catch (err) {
+    handleError(res, err);
+  }
+});
+
+// Endpoint para verificar status do sistema RFID
+app.get("/rfid/status", async (req, res) => {
+  try {
+    const [[{ total_cartoes }]] = await pool.query(
+      "SELECT COUNT(*) as total_cartoes FROM estagiarios WHERE rfid_uid IS NOT NULL"
+    );
+    
+    const [[{ presencas_hoje }]] = await pool.query(
+      "SELECT COUNT(DISTINCT estagiario_id) as presencas_hoje FROM presencas WHERE data = CURDATE()"
+    );
+    
+    res.json({
+      total_cartoes_cadastrados: total_cartoes,
+      presencas_registradas_hoje: presencas_hoje,
+      servidor: "online",
+      timestamp: new Date().toISOString()
+    });
+  } catch (err) {
+    handleError(res, err);
+  }
+});
+
 // --------------------
 // Authentication (basic)
 // --------------------
@@ -202,6 +424,19 @@ app.post("/estagiarios", async (req, res) => {
       delete body.password;
     }
 
+    // Se foi enviado rfid_uid, verifica se não está em uso
+    if (body.rfid_uid) {
+      const [existing] = await pool.query(
+        "SELECT id FROM estagiarios WHERE rfid_uid = ?", 
+        [body.rfid_uid]
+      );
+      if (existing.length > 0) {
+        return res.status(409).json({ 
+          error: "Este cartão RFID já está em uso por outro estagiário" 
+        });
+      }
+    }
+
     const [result] = await pool.query("INSERT INTO estagiarios SET ?", [body]);
     const [row] = await pool.query("SELECT * FROM estagiarios WHERE id = ?", [result.insertId]);
     res.status(201).json(row[0]);
@@ -218,6 +453,20 @@ app.put("/estagiarios/:id", async (req, res) => {
       body.foto = body.fotoPerfil;
       delete body.fotoPerfil;
     }
+
+    // Se foi enviado rfid_uid, verifica se não está em uso por outro
+    if (body.rfid_uid) {
+      const [existing] = await pool.query(
+        "SELECT id FROM estagiarios WHERE rfid_uid = ? AND id != ?", 
+        [body.rfid_uid, req.params.id]
+      );
+      if (existing.length > 0) {
+        return res.status(409).json({ 
+          error: "Este cartão RFID já está em uso por outro estagiário" 
+        });
+      }
+    }
+
     await pool.query("UPDATE estagiarios SET ? WHERE id = ?", [body, req.params.id]);
     const [row] = await pool.query("SELECT * FROM estagiarios WHERE id = ?", [req.params.id]);
     res.json(row[0]);
@@ -323,6 +572,10 @@ app.delete("/visitas/:id", async (req, res) => {
 // --------------------
 app.get("/materiais", async (req, res) => {
   try { const [rows] = await pool.query("SELECT m.*, t.nome_tipo FROM materiais m LEFT JOIN tipos_materiais t ON m.id_tipo_material = t.id ORDER BY m.id DESC"); res.json(rows); }
+  catch (err) { handleError(res, err); }
+});
+app.get("/mt", async (req, res) => {
+  try { const [rows] = await pool.query("SELECT * FROM visitas ORDER BY id DESC"); res.json(rows); }
   catch (err) { handleError(res, err); }
 });
 
