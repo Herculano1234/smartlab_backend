@@ -94,173 +94,48 @@ app.get("/tabelas", async (req, res) => {
 
 // ==================== ENDPOINTS RFID ====================
 // Endpoint para verificar status da API (ESP32)
-app.get("/rfid/status", (req, res) => {
-  res.json({ 
-    status: "online", 
-    message: "API Smart Lab RFID funcionando",
-    timestamp: new Date().toISOString()
-  });
-});
+// ==================== ENDPOINT ÚNICO PARA RECEBER UIDs DO ESP32 ====================
 
-// Endpoint principal para verificar acesso via RFID
-app.post("/rfid/verificar-acesso", async (req, res) => {
+app.post("/rfid/receber-uid", async (req, res) => {
   try {
     const { uid } = req.body;
     
     if (!uid) {
-      return res.json({
+      return res.status(400).json({
         sucesso: false,
-        acesso: "NEGADO",
         mensagem: "UID não fornecido"
       });
     }
 
-    console.log(`🔍 Verificando acesso para UID: ${uid}`);
+    console.log(`📱 UID recebido do ESP32: ${uid}`);
 
-    // Busca estagiário pelo UID
-    const [estagiarios] = await pool.query(
-      "SELECT id, nome, email, numero_processo, curso FROM estagiarios WHERE rfid_uid = ?",
-      [uid.trim()]
-    );
+    // Cria tabela temporária se não existir
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS rfid_leituras_temp (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        uid VARCHAR(50) NOT NULL,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
 
-    if (estagiarios.length === 0) {
-      return res.json({
-        sucesso: false,
-        acesso: "NEGADO", 
-        mensagem: "Cartão não cadastrado no sistema"
-      });
-    }
+    // Limpa leituras antigas (mais de 5 minutos)
+    await pool.query("DELETE FROM rfid_leituras_temp WHERE timestamp < NOW() - INTERVAL 5 MINUTE");
 
-    const estagiario = estagiarios[0];
-    const hoje = new Date().toISOString().split('T')[0];
-    const agora = new Date().toTimeString().split(' ')[0];
-
-    // Verifica se já existe registro de presença hoje
-    const [presencas] = await pool.query(
-      "SELECT * FROM presencas WHERE estagiario_id = ? AND data = ? ORDER BY id DESC LIMIT 1",
-      [estagiario.id, hoje]
-    );
-
-    let tipo = "";
-    let horario = "";
-
-    if (presencas.length === 0) {
-      // Primeira entrada do dia - ENTRADA
-      tipo = "ENTRADA";
-      await pool.query(
-        "INSERT INTO presencas (estagiario_id, data, hora_entrada) VALUES (?, ?, ?)",
-        [estagiario.id, hoje, agora]
-      );
-      horario = agora;
-    } else {
-      const ultimaPresenca = presencas[0];
-      
-      if (!ultimaPresenca.hora_saida) {
-        // Tem entrada mas não tem saída - SAÍDA
-        tipo = "SAIDA";
-        await pool.query(
-          "UPDATE presencas SET hora_saida = ? WHERE id = ?",
-          [agora, ultimaPresenca.id]
-        );
-        horario = agora;
-      } else {
-        // Já registrou entrada e saída hoje - nova ENTRADA
-        tipo = "ENTRADA";
-        await pool.query(
-          "INSERT INTO presencas (estagiario_id, data, hora_entrada) VALUES (?, ?, ?)",
-          [estagiario.id, hoje, agora]
-        );
-        horario = agora;
-      }
-    }
-
-    console.log(`✅ Acesso ${tipo} registrado para: ${estagiario.nome}`);
+    // Insere o novo UID
+    await pool.query("INSERT INTO rfid_leituras_temp (uid) VALUES (?)", [uid]);
 
     res.json({
       sucesso: true,
-      acesso: "LIBERADO",
-      mensagem: `Acesso autorizado - ${tipo}`,
-      tipo: tipo,
-      horario: horario,
-      estagiario: {
-        id: estagiario.id,
-        nome: estagiario.nome,
-        numero_processo: estagiario.numero_processo,
-        curso: estagiario.curso
-      }
+      mensagem: "UID recebido com sucesso",
+      uid: uid,
+      timestamp: new Date().toISOString()
     });
 
   } catch (err) {
-    console.error("❌ Erro no endpoint RFID:", err);
+    console.error("❌ Erro ao receber UID:", err);
     res.status(500).json({
       sucesso: false,
-      acesso: "NEGADO",
       mensagem: "Erro interno do servidor"
-    });
-  }
-});
-
-// Endpoint para obter UID disponível (para cadastro)
-app.get("/rfid/uid-disponivel", async (req, res) => {
-  try {
-    const [estagiarios] = await pool.query(
-      "SELECT rfid_uid FROM estagiarios WHERE rfid_uid IS NOT NULL AND rfid_uid != ''"
-    );
-    
-    const uidsCadastrados = estagiarios.map(e => e.rfid_uid);
-    
-    res.json({
-      sucesso: true,
-      uids_cadastrados: uidsCadastrados,
-      total_cadastrados: uidsCadastrados.length
-    });
-    
-  } catch (err) {
-    console.error("Erro ao buscar UIDs:", err);
-    res.status(500).json({
-      sucesso: false,
-      mensagem: "Erro ao buscar UIDs cadastrados"
-    });
-  }
-});
-
-// Endpoint para verificar se UID já está em uso
-app.post("/rfid/verificar-uid", async (req, res) => {
-  try {
-    const { uid } = req.body;
-    
-    if (!uid) {
-      return res.json({
-        sucesso: false,
-        mensagem: "UID não fornecido"
-      });
-    }
-
-    const [estagiarios] = await pool.query(
-      "SELECT id, nome FROM estagiarios WHERE rfid_uid = ?",
-      [uid]
-    );
-
-    if (estagiarios.length > 0) {
-      return res.json({
-        sucesso: true,
-        disponivel: false,
-        mensagem: "UID já está em uso",
-        estagiario: estagiarios[0]
-      });
-    }
-
-    res.json({
-      sucesso: true,
-      disponivel: true,
-      mensagem: "UID disponível para cadastro"
-    });
-
-  } catch (err) {
-    console.error("Erro ao verificar UID:", err);
-    res.status(500).json({
-      sucesso: false,
-      mensagem: "Erro ao verificar UID"
     });
   }
 });
