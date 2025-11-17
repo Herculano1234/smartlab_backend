@@ -7,14 +7,14 @@ import bcrypt from "bcryptjs";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+
 dotenv.config();
+
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// --------------------
-// MySQL (Aiven) Pool
-// --------------------
+// ==================== CONFIGURAÇÃO DO BANCO DE DADOS ====================
 const pool = mysql.createPool({
   host: process.env.DB_HOST,
   port: process.env.DB_PORT ? parseInt(process.env.DB_PORT, 10) : 3306,
@@ -28,37 +28,31 @@ const pool = mysql.createPool({
   ssl: { rejectUnauthorized: false },
 });
 
-// Corrigir __dirname (pois em ES Modules ele não existe direto)
+// ==================== INICIALIZAÇÃO ====================
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 async function initDatabase() {
   try {
-    // Sobe uma pasta (de /src para /)
     const sqlPath = path.join(__dirname, "../init_db.sql");
     const sql = fs.readFileSync(sqlPath, "utf8");
 
     console.log("🟢 Inicializando o banco de dados...");
     await pool.query(sql);
-    
     console.log("✅ Banco de dados inicializado com sucesso!");
   } catch (err) {
     console.error("❌ Erro ao inicializar o banco de dados:", err.message);
   }
 }
 
-// Chama antes de iniciar o servidor
 await initDatabase();
-// --------------------
-// Helpers
-// --------------------
+
+// ==================== HELPERS ====================
 const handleError = (res, err) => {
   console.error(err);
   return res.status(500).json({ error: "Internal server error" });
 };
 
-// Simple input sanitizer for objects used with `SET ?`
-// Removes undefined keys to avoid inserting them.
 const clean = (obj) => {
   const out = {};
   Object.keys(obj).forEach((k) => {
@@ -66,34 +60,12 @@ const clean = (obj) => {
   });
   return out;
 };
-// Endpoint raiz para verificar status do servidor
-app.get("/", (req, res) => {
-  res.send("Servidor rodando");
-});
-// Endpoint para listar todas as tabelas do banco de dados
-app.get("/tabelas", async (req, res) => {
-  try {
-    const [rows] = await pool.query("SHOW TABLES");
-    
-    // Extrai o nome das tabelas (a chave depende do nome do banco)
-    const tabelas = rows.map(row => Object.values(row)[0]);
-    
-    res.json({
-      sucesso: true,
-      total: tabelas.length,
-      tabelas
-    });
-  } catch (err) {
-    console.error("Erro ao listar tabelas:", err.message);
-    res.status(500).json({
-      sucesso: false,
-      erro: "Erro ao listar tabelas do banco de dados."
-    });
-  }
-});
 
 // ==================== ENDPOINTS RFID ====================
-// Endpoint para verificar status da API (ESP32)
+let ultimoUID = null;
+let timestampUID = null;
+
+// Status da API RFID
 app.get("/rfid/status", (req, res) => {
   res.json({ 
     status: "online", 
@@ -102,7 +74,68 @@ app.get("/rfid/status", (req, res) => {
   });
 });
 
-// Endpoint principal para verificar acesso via RFID
+// Endpoint para receber UID do leitor RFID (ESP32)
+app.post("/rfid", async (req, res) => {
+  try {
+    const { code } = req.body;
+    
+    if (!code) {
+      return res.status(400).json({
+        success: false,
+        message: "UID não fornecido"
+      });
+    }
+
+    // Armazena UID para auto-preenchimento
+    ultimoUID = code;
+    timestampUID = new Date();
+
+    console.log(`📱 UID recebido do leitor: ${code}`);
+    
+    res.json({
+      success: true,
+      message: "UID registrado com sucesso",
+      code: code,
+      timestamp: timestampUID
+    });
+    
+  } catch (error) {
+    console.error("Erro ao registrar UID:", error);
+    res.status(500).json({
+      success: false,
+      message: "Erro interno do servidor"
+    });
+  }
+});
+
+// Buscar UID mais recente para auto-preenchimento
+app.get("/rfid/ultimo", (req, res) => {
+  if (timestampUID && (new Date() - timestampUID) > 30000) {
+    ultimoUID = null;
+    timestampUID = null;
+  }
+  
+  res.json({
+    code: ultimoUID,
+    timestamp: timestampUID,
+    disponivel: !!ultimoUID,
+    success: true
+  });
+});
+
+// Confirmar uso do UID
+app.post("/rfid/confirmar", (req, res) => {
+  const { code } = req.body;
+  
+  if (ultimoUID === code) {
+    ultimoUID = null;
+    timestampUID = null;
+  }
+  
+  res.json({ success: true });
+});
+
+// Verificar acesso via RFID
 app.post("/rfid/verificar-acesso", async (req, res) => {
   try {
     const { uid } = req.body;
@@ -117,7 +150,6 @@ app.post("/rfid/verificar-acesso", async (req, res) => {
 
     console.log(`🔍 Verificando acesso para UID: ${uid}`);
 
-    // Busca estagiário pelo UID
     const [estagiarios] = await pool.query(
       "SELECT id, nome, email, numero_processo, curso FROM estagiarios WHERE rfid_uid = ?",
       [uid.trim()]
@@ -135,7 +167,6 @@ app.post("/rfid/verificar-acesso", async (req, res) => {
     const hoje = new Date().toISOString().split('T')[0];
     const agora = new Date().toTimeString().split(' ')[0];
 
-    // Verifica se já existe registro de presença hoje
     const [presencas] = await pool.query(
       "SELECT * FROM presencas WHERE estagiario_id = ? AND data = ? ORDER BY id DESC LIMIT 1",
       [estagiario.id, hoje]
@@ -145,7 +176,6 @@ app.post("/rfid/verificar-acesso", async (req, res) => {
     let horario = "";
 
     if (presencas.length === 0) {
-      // Primeira entrada do dia - ENTRADA
       tipo = "ENTRADA";
       await pool.query(
         "INSERT INTO presencas (estagiario_id, data, hora_entrada) VALUES (?, ?, ?)",
@@ -156,7 +186,6 @@ app.post("/rfid/verificar-acesso", async (req, res) => {
       const ultimaPresenca = presencas[0];
       
       if (!ultimaPresenca.hora_saida) {
-        // Tem entrada mas não tem saída - SAÍDA
         tipo = "SAIDA";
         await pool.query(
           "UPDATE presencas SET hora_saida = ? WHERE id = ?",
@@ -164,7 +193,6 @@ app.post("/rfid/verificar-acesso", async (req, res) => {
         );
         horario = agora;
       } else {
-        // Já registrou entrada e saída hoje - nova ENTRADA
         tipo = "ENTRADA";
         await pool.query(
           "INSERT INTO presencas (estagiario_id, data, hora_entrada) VALUES (?, ?, ?)",
@@ -200,7 +228,7 @@ app.post("/rfid/verificar-acesso", async (req, res) => {
   }
 });
 
-// Endpoint para obter UID disponível (para cadastro)
+// UID disponível para cadastro
 app.get("/rfid/uid-disponivel", async (req, res) => {
   try {
     const [estagiarios] = await pool.query(
@@ -224,7 +252,7 @@ app.get("/rfid/uid-disponivel", async (req, res) => {
   }
 });
 
-// Endpoint para verificar se UID já está em uso
+// Verificar se UID já está em uso
 app.post("/rfid/verificar-uid", async (req, res) => {
   try {
     const { uid } = req.body;
@@ -264,13 +292,32 @@ app.post("/rfid/verificar-uid", async (req, res) => {
     });
   }
 });
-// ==================== FIM ENDPOINTS RFID ====================
 
-// --------------------
-// Authentication (basic)
-// --------------------
-// NOTE: For production add JWT, sessions and stricter validation.
-// Register endpoint: create a professor (administrative) or instruct to use /estagiarios
+// ==================== ENDPOINTS GERAIS ====================
+app.get("/", (req, res) => {
+  res.send("Servidor rodando");
+});
+
+app.get("/tabelas", async (req, res) => {
+  try {
+    const [rows] = await pool.query("SHOW TABLES");
+    const tabelas = rows.map(row => Object.values(row)[0]);
+    
+    res.json({
+      sucesso: true,
+      total: tabelas.length,
+      tabelas
+    });
+  } catch (err) {
+    console.error("Erro ao listar tabelas:", err.message);
+    res.status(500).json({
+      sucesso: false,
+      erro: "Erro ao listar tabelas do banco de dados."
+    });
+  }
+});
+
+// ==================== AUTENTICAÇÃO ====================
 app.post("/auth/register", async (req, res) => {
   try {
     const { username, email, password, role = "estagiario", genero } = req.body;
@@ -279,15 +326,12 @@ app.post("/auth/register", async (req, res) => {
     }
 
     if (role === "estagiario") {
-      // estagiários should be created via /estagiarios which expects full profile data
       return res.status(400).json({ error: "Use /estagiarios para cadastrar estagiários com perfil completo" });
     }
 
     if (role === "professor") {
-      // For professor creation require genero as it's NOT NULL in schema
       if (!genero) return res.status(400).json({ error: "genero é obrigatório para professor" });
       const hashed = await bcrypt.hash(password, 10);
-      // allow optional photo
       const foto = req.body.foto || req.body.fotoPerfil || null;
       try {
         const [result] = await pool.query(
@@ -311,7 +355,7 @@ app.post("/auth/login", async (req, res) => {
   try {
     const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ error: "email and password required" });
-    // Try professores first
+    
     const [profRows] = await pool.query("SELECT id, nome, email, password_hash FROM professores WHERE email = ?", [email]);
     if (profRows.length) {
       const prof = profRows[0];
@@ -320,7 +364,6 @@ app.post("/auth/login", async (req, res) => {
       return res.json({ id: prof.id, username: prof.nome, email: prof.email, role: "professor" });
     }
 
-    // Then try estagiarios
     const [estRows] = await pool.query("SELECT id, nome, email, password_hash FROM estagiarios WHERE email = ?", [email]);
     if (estRows.length) {
       const est = estRows[0];
@@ -335,9 +378,7 @@ app.post("/auth/login", async (req, res) => {
   }
 });
 
-// --------------------
-// Estagiários
-// --------------------
+// ==================== ESTAGIÁRIOS ====================
 app.get("/estagiarios", async (req, res) => {
   try {
     const [rows] = await pool.query("SELECT * FROM estagiarios ORDER BY id DESC");
@@ -356,32 +397,55 @@ app.get("/estagiarios/:id", async (req, res) => {
 app.post("/estagiarios", async (req, res) => {
   try {
     const body = clean(req.body);
-    // Accept photo sent as 'fotoPerfil' from frontend and map to 'foto' DB column
+    
+    // Mapear campos do frontend para o backend
     if (body.fotoPerfil) {
       body.foto = body.fotoPerfil;
       delete body.fotoPerfil;
     }
-    // minimal required fields validation
+    
+    // Mapear campos RFID
+    if (body.codigoRFID) {
+      body.rfid_uid = body.codigoRFID;
+      delete body.codigoRFID;
+    }
+    
+    // Mapear data de início
+    if (body.dataInicio) {
+      body.data_inicio = body.dataInicio;
+      delete body.dataInicio;
+    }
+
+    // Campos obrigatórios
     const required = ["nome", "data_nascimento", "genero", "numero_processo", "curso", "password"];
     for (const f of required) if (!body[f]) return res.status(400).json({ error: `${f} é obrigatório` });
 
-    // If a plain password was provided, hash it here and store under password_hash
+    // Hash da senha
     if (body.password) {
       try {
         const hashed = await bcrypt.hash(body.password, 10);
         body.password_hash = hashed;
+        delete body.password;
       } catch (hashErr) {
         console.error('Erro ao hashar senha do estagiário', hashErr);
         return res.status(500).json({ error: 'Erro interno ao processar senha' });
       }
-      delete body.password;
     }
 
     const [result] = await pool.query("INSERT INTO estagiarios SET ?", [body]);
     const [row] = await pool.query("SELECT * FROM estagiarios WHERE id = ?", [result.insertId]);
-    res.status(201).json(row[0]);
+    
+    res.status(201).json({
+      success: true,
+      message: "Estagiário cadastrado com sucesso",
+      data: row[0]
+    });
+    
   } catch (err) {
-    if (err.code === "ER_DUP_ENTRY") return res.status(409).json({ error: "Número de processo ou RFID duplicado" });
+    if (err.code === "ER_DUP_ENTRY") {
+      return res.status(409).json({ error: "Número de processo ou RFID duplicado" });
+    }
+    console.error("Erro ao cadastrar estagiário:", err);
     handleError(res, err);
   }
 });
@@ -427,23 +491,25 @@ app.get("/estagiarios/:id/emprestimos", async (req, res) => {
   } catch (err) { handleError(res, err); }
 });
 
-// --------------------
-// Professores
-// --------------------
+// ==================== PROFESSORES ====================
 app.get("/professores", async (req, res) => {
-  try { const [rows] = await pool.query("SELECT * FROM professores ORDER BY id DESC"); res.json(rows); }
-  catch (err) { handleError(res, err); }
+  try { 
+    const [rows] = await pool.query("SELECT * FROM professores ORDER BY id DESC"); 
+    res.json(rows); 
+  } catch (err) { handleError(res, err); }
 });
 
 app.get("/professores/:id", async (req, res) => {
-  try { const [rows] = await pool.query("SELECT * FROM professores WHERE id = ?", [req.params.id]); if (!rows.length) return res.status(404).json({ error: "Professor não encontrado" }); res.json(rows[0]); }
-  catch (err) { handleError(res, err); }
+  try { 
+    const [rows] = await pool.query("SELECT * FROM professores WHERE id = ?", [req.params.id]); 
+    if (!rows.length) return res.status(404).json({ error: "Professor não encontrado" }); 
+    res.json(rows[0]); 
+  } catch (err) { handleError(res, err); }
 });
 
 app.post("/professores", async (req, res) => {
   try {
     const body = clean(req.body);
-    // Accept photo sent as 'fotoPerfil' from frontend
     if (body.fotoPerfil) {
       body.foto = body.fotoPerfil;
       delete body.fotoPerfil;
@@ -456,88 +522,121 @@ app.post("/professores", async (req, res) => {
 });
 
 app.put("/professores/:id", async (req, res) => {
-  try { const body = clean(req.body); await pool.query("UPDATE professores SET ? WHERE id = ?", [body, req.params.id]); const [row] = await pool.query("SELECT * FROM professores WHERE id = ?", [req.params.id]); res.json(row[0]); }
-  catch (err) { handleError(res, err); }
+  try { 
+    const body = clean(req.body); 
+    await pool.query("UPDATE professores SET ? WHERE id = ?", [body, req.params.id]); 
+    const [row] = await pool.query("SELECT * FROM professores WHERE id = ?", [req.params.id]); 
+    res.json(row[0]); 
+  } catch (err) { handleError(res, err); }
 });
 
 app.delete("/professores/:id", async (req, res) => {
-  try { await pool.query("DELETE FROM professores WHERE id = ?", [req.params.id]); res.json({ message: "Professor removido" }); }
-  catch (err) { handleError(res, err); }
+  try { 
+    await pool.query("DELETE FROM professores WHERE id = ?", [req.params.id]); 
+    res.json({ message: "Professor removido" }); 
+  } catch (err) { handleError(res, err); }
 });
 
-// --------------------
-// Visitas
-// --------------------
+// ==================== VISITAS ====================
 app.get("/visitas", async (req, res) => {
-  try { const [rows] = await pool.query("SELECT * FROM visitas ORDER BY id DESC"); res.json(rows); }
-  catch (err) { handleError(res, err); }
+  try { 
+    const [rows] = await pool.query("SELECT * FROM visitas ORDER BY id DESC"); 
+    res.json(rows); 
+  } catch (err) { handleError(res, err); }
 });
 
 app.get("/visitas/:id", async (req, res) => {
-  try { const [rows] = await pool.query("SELECT * FROM visitas WHERE id = ?", [req.params.id]); if (!rows.length) return res.status(404).json({ error: "Visita não encontrada" }); res.json(rows[0]); }
-  catch (err) { handleError(res, err); }
+  try { 
+    const [rows] = await pool.query("SELECT * FROM visitas WHERE id = ?", [req.params.id]); 
+    if (!rows.length) return res.status(404).json({ error: "Visita não encontrada" }); 
+    res.json(rows[0]); 
+  } catch (err) { handleError(res, err); }
 });
 
 app.post("/visitas", async (req, res) => {
-  try { const body = clean(req.body); const [result] = await pool.query("INSERT INTO visitas SET ?", [body]); const [row] = await pool.query("SELECT * FROM visitas WHERE id = ?", [result.insertId]); res.status(201).json(row[0]); }
-  catch (err) { handleError(res, err); }
+  try { 
+    const body = clean(req.body); 
+    const [result] = await pool.query("INSERT INTO visitas SET ?", [body]); 
+    const [row] = await pool.query("SELECT * FROM visitas WHERE id = ?", [result.insertId]); 
+    res.status(201).json(row[0]); 
+  } catch (err) { handleError(res, err); }
 });
 
 app.put("/visitas/:id", async (req, res) => {
-  try { const body = clean(req.body); await pool.query("UPDATE visitas SET ? WHERE id = ?", [body, req.params.id]); const [row] = await pool.query("SELECT * FROM visitas WHERE id = ?", [req.params.id]); res.json(row[0]); }
-  catch (err) { handleError(res, err); }
+  try { 
+    const body = clean(req.body); 
+    await pool.query("UPDATE visitas SET ? WHERE id = ?", [body, req.params.id]); 
+    const [row] = await pool.query("SELECT * FROM visitas WHERE id = ?", [req.params.id]); 
+    res.json(row[0]); 
+  } catch (err) { handleError(res, err); }
 });
 
 app.delete("/visitas/:id", async (req, res) => {
-  try { await pool.query("DELETE FROM visitas WHERE id = ?", [req.params.id]); res.json({ message: "Visita removida" }); }
-  catch (err) { handleError(res, err); }
+  try { 
+    await pool.query("DELETE FROM visitas WHERE id = ?", [req.params.id]); 
+    res.json({ message: "Visita removida" }); 
+  } catch (err) { handleError(res, err); }
 });
 
-// --------------------
-// Materiais & Tipos
-// --------------------
+// ==================== MATERIAIS & TIPOS ====================
 app.get("/materiais", async (req, res) => {
-  try { const [rows] = await pool.query("SELECT m.*, t.nome_tipo FROM materiais m LEFT JOIN tipos_materiais t ON m.id_tipo_material = t.id ORDER BY m.id DESC"); res.json(rows); }
-  catch (err) { handleError(res, err); }
-});
-app.get("/mt", async (req, res) => {
-  try { const [rows] = await pool.query("SELECT * FROM visitas ORDER BY id DESC"); res.json(rows); }
-  catch (err) { handleError(res, err); }
+  try { 
+    const [rows] = await pool.query("SELECT m.*, t.nome_tipo FROM materiais m LEFT JOIN tipos_materiais t ON m.id_tipo_material = t.id ORDER BY m.id DESC"); 
+    res.json(rows); 
+  } catch (err) { handleError(res, err); }
 });
 
 app.get("/materiais/:id", async (req, res) => {
-  try { const [rows] = await pool.query("SELECT * FROM materiais WHERE id = ?", [req.params.id]); if (!rows.length) return res.status(404).json({ error: "Material não encontrado" }); res.json(rows[0]); }
-  catch (err) { handleError(res, err); }
+  try { 
+    const [rows] = await pool.query("SELECT * FROM materiais WHERE id = ?", [req.params.id]); 
+    if (!rows.length) return res.status(404).json({ error: "Material não encontrado" }); 
+    res.json(rows[0]); 
+  } catch (err) { handleError(res, err); }
 });
 
 app.post("/materiais", async (req, res) => {
-  try { const body = clean(req.body); const [result] = await pool.query("INSERT INTO materiais SET ?", [body]); const [row] = await pool.query("SELECT * FROM materiais WHERE id = ?", [result.insertId]); res.status(201).json(row[0]); }
-  catch (err) { handleError(res, err); }
+  try { 
+    const body = clean(req.body); 
+    const [result] = await pool.query("INSERT INTO materiais SET ?", [body]); 
+    const [row] = await pool.query("SELECT * FROM materiais WHERE id = ?", [result.insertId]); 
+    res.status(201).json(row[0]); 
+  } catch (err) { handleError(res, err); }
 });
 
 app.put("/materiais/:id", async (req, res) => {
-  try { const body = clean(req.body); await pool.query("UPDATE materiais SET ? WHERE id = ?", [body, req.params.id]); const [row] = await pool.query("SELECT * FROM materiais WHERE id = ?", [req.params.id]); res.json(row[0]); }
-  catch (err) { handleError(res, err); }
+  try { 
+    const body = clean(req.body); 
+    await pool.query("UPDATE materiais SET ? WHERE id = ?", [body, req.params.id]); 
+    const [row] = await pool.query("SELECT * FROM materiais WHERE id = ?", [req.params.id]); 
+    res.json(row[0]); 
+  } catch (err) { handleError(res, err); }
 });
 
 app.delete("/materiais/:id", async (req, res) => {
-  try { await pool.query("DELETE FROM materiais WHERE id = ?", [req.params.id]); res.json({ message: "Material removido" }); }
-  catch (err) { handleError(res, err); }
+  try { 
+    await pool.query("DELETE FROM materiais WHERE id = ?", [req.params.id]); 
+    res.json({ message: "Material removido" }); 
+  } catch (err) { handleError(res, err); }
 });
 
 app.get("/materiais/tipos", async (req, res) => {
-  try { const [rows] = await pool.query("SELECT * FROM tipos_materiais ORDER BY id"); res.json(rows); }
-  catch (err) { handleError(res, err); }
+  try { 
+    const [rows] = await pool.query("SELECT * FROM tipos_materiais ORDER BY id"); 
+    res.json(rows); 
+  } catch (err) { handleError(res, err); }
 });
 
 app.post("/materiais/tipos", async (req, res) => {
-  try { const { nome_tipo } = req.body; if (!nome_tipo) return res.status(400).json({ error: "nome_tipo obrigatório" }); const [result] = await pool.query("INSERT INTO tipos_materiais (nome_tipo) VALUES (?)", [nome_tipo]); const [row] = await pool.query("SELECT * FROM tipos_materiais WHERE id = ?", [result.insertId]); res.status(201).json(row[0]); }
-  catch (err) { handleError(res, err); }
+  try { 
+    const { nome_tipo } = req.body; 
+    if (!nome_tipo) return res.status(400).json({ error: "nome_tipo obrigatório" }); 
+    const [result] = await pool.query("INSERT INTO tipos_materiais (nome_tipo) VALUES (?)", [nome_tipo]); 
+    const [row] = await pool.query("SELECT * FROM tipos_materiais WHERE id = ?", [result.insertId]); 
+    res.status(201).json(row[0]); 
+  } catch (err) { handleError(res, err); }
 });
 
-// --------------------
-// Empréstimos
-// --------------------
+// ==================== EMPRÉSTIMOS ====================
 app.get("/emprestimos", async (req, res) => {
   try {
     const [rows] = await pool.query(
@@ -552,8 +651,11 @@ app.get("/emprestimos", async (req, res) => {
 });
 
 app.get("/emprestimos/:id", async (req, res) => {
-  try { const [rows] = await pool.query("SELECT * FROM emprestimos WHERE id = ?", [req.params.id]); if (!rows.length) return res.status(404).json({ error: "Empréstimo não encontrado" }); res.json(rows[0]); }
-  catch (err) { handleError(res, err); }
+  try { 
+    const [rows] = await pool.query("SELECT * FROM emprestimos WHERE id = ?", [req.params.id]); 
+    if (!rows.length) return res.status(404).json({ error: "Empréstimo não encontrado" }); 
+    res.json(rows[0]); 
+  } catch (err) { handleError(res, err); }
 });
 
 app.post("/emprestimos", async (req, res) => {
@@ -569,26 +671,34 @@ app.post("/emprestimos", async (req, res) => {
 });
 
 app.put("/emprestimos/:id", async (req, res) => {
-  try { const body = clean(req.body); await pool.query("UPDATE emprestimos SET ? WHERE id = ?", [body, req.params.id]); const [row] = await pool.query("SELECT * FROM emprestimos WHERE id = ?", [req.params.id]); res.json(row[0]); }
-  catch (err) { handleError(res, err); }
+  try { 
+    const body = clean(req.body); 
+    await pool.query("UPDATE emprestimos SET ? WHERE id = ?", [body, req.params.id]); 
+    const [row] = await pool.query("SELECT * FROM emprestimos WHERE id = ?", [req.params.id]); 
+    res.json(row[0]); 
+  } catch (err) { handleError(res, err); }
 });
 
 app.delete("/emprestimos/:id", async (req, res) => {
-  try { await pool.query("DELETE FROM emprestimos WHERE id = ?", [req.params.id]); res.json({ message: "Empréstimo cancelado" }); }
-  catch (err) { handleError(res, err); }
+  try { 
+    await pool.query("DELETE FROM emprestimos WHERE id = ?", [req.params.id]); 
+    res.json({ message: "Empréstimo cancelado" }); 
+  } catch (err) { handleError(res, err); }
 });
 
-// --------------------
-// Presenças
-// --------------------
+// ==================== PRESENÇAS ====================
 app.get("/presencas", async (req, res) => {
-  try { const [rows] = await pool.query("SELECT p.*, e.nome as estagiario_nome FROM presencas p LEFT JOIN estagiarios e ON p.estagiario_id = e.id ORDER BY p.data DESC, p.hora_entrada DESC"); res.json(rows); }
-  catch (err) { handleError(res, err); }
+  try { 
+    const [rows] = await pool.query("SELECT p.*, e.nome as estagiario_nome FROM presencas p LEFT JOIN estagiarios e ON p.estagiario_id = e.id ORDER BY p.data DESC, p.hora_entrada DESC"); 
+    res.json(rows); 
+  } catch (err) { handleError(res, err); }
 });
 
 app.get("/presencas/:estagiarioId", async (req, res) => {
-  try { const [rows] = await pool.query("SELECT * FROM presencas WHERE estagiario_id = ? ORDER BY data DESC", [req.params.estagiarioId]); res.json(rows); }
-  catch (err) { handleError(res, err); }
+  try { 
+    const [rows] = await pool.query("SELECT * FROM presencas WHERE estagiario_id = ? ORDER BY data DESC", [req.params.estagiarioId]); 
+    res.json(rows); 
+  } catch (err) { handleError(res, err); }
 });
 
 app.post("/presencas", async (req, res) => {
@@ -601,37 +711,49 @@ app.post("/presencas", async (req, res) => {
   } catch (err) { handleError(res, err); }
 });
 
-// --------------------
-// Relatórios
-// --------------------
+// ==================== RELATÓRIOS ====================
 app.get("/relatorios", async (req, res) => {
-  try { const [rows] = await pool.query("SELECT * FROM relatorios ORDER BY id DESC"); res.json(rows); }
-  catch (err) { handleError(res, err); }
+  try { 
+    const [rows] = await pool.query("SELECT * FROM relatorios ORDER BY id DESC"); 
+    res.json(rows); 
+  } catch (err) { handleError(res, err); }
 });
 
 app.get("/relatorios/:id", async (req, res) => {
-  try { const [rows] = await pool.query("SELECT * FROM relatorios WHERE id = ?", [req.params.id]); if (!rows.length) return res.status(404).json({ error: "Relatório não encontrado" }); res.json(rows[0]); }
-  catch (err) { handleError(res, err); }
+  try { 
+    const [rows] = await pool.query("SELECT * FROM relatorios WHERE id = ?", [req.params.id]); 
+    if (!rows.length) return res.status(404).json({ error: "Relatório não encontrado" }); 
+    res.json(rows[0]); 
+  } catch (err) { handleError(res, err); }
 });
 
 app.post("/relatorios", async (req, res) => {
-  try { const body = clean(req.body); if (!body.estagiario_id || !body.titulo || !body.conteudo) return res.status(400).json({ error: "estagiario_id, titulo e conteudo obrigatórios" }); const [result] = await pool.query("INSERT INTO relatorios SET ?", [body]); const [row] = await pool.query("SELECT * FROM relatorios WHERE id = ?", [result.insertId]); res.status(201).json(row[0]); }
-  catch (err) { handleError(res, err); }
+  try { 
+    const body = clean(req.body); 
+    if (!body.estagiario_id || !body.titulo || !body.conteudo) return res.status(400).json({ error: "estagiario_id, titulo e conteudo obrigatórios" }); 
+    const [result] = await pool.query("INSERT INTO relatorios SET ?", [body]); 
+    const [row] = await pool.query("SELECT * FROM relatorios WHERE id = ?", [result.insertId]); 
+    res.status(201).json(row[0]); 
+  } catch (err) { handleError(res, err); }
 });
 
 app.put("/relatorios/:id", async (req, res) => {
-  try { const body = clean(req.body); await pool.query("UPDATE relatorios SET ? WHERE id = ?", [body, req.params.id]); const [row] = await pool.query("SELECT * FROM relatorios WHERE id = ?", [req.params.id]); res.json(row[0]); }
-  catch (err) { handleError(res, err); }
+  try { 
+    const body = clean(req.body); 
+    await pool.query("UPDATE relatorios SET ? WHERE id = ?", [body, req.params.id]); 
+    const [row] = await pool.query("SELECT * FROM relatorios WHERE id = ?", [req.params.id]); 
+    res.json(row[0]); 
+  } catch (err) { handleError(res, err); }
 });
 
 app.delete("/relatorios/:id", async (req, res) => {
-  try { await pool.query("DELETE FROM relatorios WHERE id = ?", [req.params.id]); res.json({ message: "Relatório removido" }); }
-  catch (err) { handleError(res, err); }
+  try { 
+    await pool.query("DELETE FROM relatorios WHERE id = ?", [req.params.id]); 
+    res.json({ message: "Relatório removido" }); 
+  } catch (err) { handleError(res, err); }
 });
 
-// --------------------
-// Dashboard / Estatísticas simples
-// --------------------
+// ==================== DASHBOARD ====================
 app.get("/dashboard", async (req, res) => {
   try {
     const [[{ total_estagiarios }]] = await pool.query("SELECT COUNT(*) AS total_estagiarios FROM estagiarios");
@@ -641,15 +763,10 @@ app.get("/dashboard", async (req, res) => {
   } catch (err) { handleError(res, err); }
 });
 
-// --------------------
-// Start server
-// --------------------
-// Admin migration endpoint: alter foto columns to LONGTEXT on demand
-// WARNING: Enabled only if ALLOW_MIGRATE=true in env (safety)
+// ==================== ADMIN/MIGRAÇÃO ====================
 app.post('/admin/migrate/foto-columns', async (req, res) => {
   try {
     if (process.env.ALLOW_MIGRATE !== 'true') return res.status(403).json({ error: 'Migration not allowed' });
-    // multipleStatements is enabled on pool, run both alters
     await pool.query('ALTER TABLE professores MODIFY foto LONGTEXT; ALTER TABLE estagiarios MODIFY foto LONGTEXT;');
     return res.json({ ok: true, message: 'Migration executed' });
   } catch (err) {
@@ -658,5 +775,6 @@ app.post('/admin/migrate/foto-columns', async (req, res) => {
   }
 });
 
+// ==================== INICIAR SERVIDOR ====================
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 4000;
 app.listen(PORT, () => console.log(`Smart Lab API rodando na porta ${PORT}`));
