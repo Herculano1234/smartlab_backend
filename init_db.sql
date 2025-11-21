@@ -1,4 +1,3 @@
--- INÍCIO DO SCRIPT SQL PARA INICIALIZAÇÃO DO BANCO DE DADOS
 -- ===========================
 -- TABELA: Professores
 -- ===========================
@@ -77,6 +76,7 @@ CREATE TABLE IF NOT EXISTS materiais (
   code_id VARCHAR(50) UNIQUE NOT NULL,
   id_tipo_material INT NULL,
   descricao TEXT,
+  foto LONGTEXT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_materiais_tipo FOREIGN KEY (id_tipo_material)
     REFERENCES tipos_materiais(id) ON DELETE SET NULL

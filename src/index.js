@@ -1,4 +1,3 @@
-// index.js
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -47,6 +46,24 @@ async function initDatabase() {
   }
 }
 
+let lastRfidCode = null; // variável em memória que guarda o último código
+
+// Endpoint que o ESP32 chama para enviar o código RFID
+app.post('/rfid', (req, res) => {
+  const { code } = req.body;
+  if (!code) return res.status(400).json({ error: 'code é obrigatório' });
+
+  lastRfidCode = code;
+  console.log('RFID recebido:', code);
+  return res.json({ ok: true });
+});
+
+// Endpoint que o frontend chama para obter o último código
+app.get('/rfid', (req, res) => {
+  return res.json({ code: lastRfidCode });
+});
+
+
 // Chama antes de iniciar o servidor
 await initDatabase();
 // --------------------
@@ -91,181 +108,6 @@ app.get("/tabelas", async (req, res) => {
     });
   }
 });
-
-// ==================== ENDPOINTS RFID ====================
-// Endpoint para verificar status da API (ESP32)
-app.get("/rfid/status", (req, res) => {
-  res.json({ 
-    status: "online", 
-    message: "API Smart Lab RFID funcionando",
-    timestamp: new Date().toISOString()
-  });
-});
-
-// Endpoint principal para verificar acesso via RFID
-app.post("/rfid/verificar-acesso", async (req, res) => {
-  try {
-    const { uid } = req.body;
-    
-    if (!uid) {
-      return res.json({
-        sucesso: false,
-        acesso: "NEGADO",
-        mensagem: "UID não fornecido"
-      });
-    }
-
-    console.log(`🔍 Verificando acesso para UID: ${uid}`);
-
-    // Busca estagiário pelo UID
-    const [estagiarios] = await pool.query(
-      "SELECT id, nome, email, numero_processo, curso FROM estagiarios WHERE rfid_uid = ?",
-      [uid.trim()]
-    );
-
-    if (estagiarios.length === 0) {
-      return res.json({
-        sucesso: false,
-        acesso: "NEGADO", 
-        mensagem: "Cartão não cadastrado no sistema"
-      });
-    }
-
-    const estagiario = estagiarios[0];
-    const hoje = new Date().toISOString().split('T')[0];
-    const agora = new Date().toTimeString().split(' ')[0];
-
-    // Verifica se já existe registro de presença hoje
-    const [presencas] = await pool.query(
-      "SELECT * FROM presencas WHERE estagiario_id = ? AND data = ? ORDER BY id DESC LIMIT 1",
-      [estagiario.id, hoje]
-    );
-
-    let tipo = "";
-    let horario = "";
-
-    if (presencas.length === 0) {
-      // Primeira entrada do dia - ENTRADA
-      tipo = "ENTRADA";
-      await pool.query(
-        "INSERT INTO presencas (estagiario_id, data, hora_entrada) VALUES (?, ?, ?)",
-        [estagiario.id, hoje, agora]
-      );
-      horario = agora;
-    } else {
-      const ultimaPresenca = presencas[0];
-      
-      if (!ultimaPresenca.hora_saida) {
-        // Tem entrada mas não tem saída - SAÍDA
-        tipo = "SAIDA";
-        await pool.query(
-          "UPDATE presencas SET hora_saida = ? WHERE id = ?",
-          [agora, ultimaPresenca.id]
-        );
-        horario = agora;
-      } else {
-        // Já registrou entrada e saída hoje - nova ENTRADA
-        tipo = "ENTRADA";
-        await pool.query(
-          "INSERT INTO presencas (estagiario_id, data, hora_entrada) VALUES (?, ?, ?)",
-          [estagiario.id, hoje, agora]
-        );
-        horario = agora;
-      }
-    }
-
-    console.log(`✅ Acesso ${tipo} registrado para: ${estagiario.nome}`);
-
-    res.json({
-      sucesso: true,
-      acesso: "LIBERADO",
-      mensagem: `Acesso autorizado - ${tipo}`,
-      tipo: tipo,
-      horario: horario,
-      estagiario: {
-        id: estagiario.id,
-        nome: estagiario.nome,
-        numero_processo: estagiario.numero_processo,
-        curso: estagiario.curso
-      }
-    });
-
-  } catch (err) {
-    console.error("❌ Erro no endpoint RFID:", err);
-    res.status(500).json({
-      sucesso: false,
-      acesso: "NEGADO",
-      mensagem: "Erro interno do servidor"
-    });
-  }
-});
-
-// Endpoint para obter UID disponível (para cadastro)
-app.get("/rfid/uid-disponivel", async (req, res) => {
-  try {
-    const [estagiarios] = await pool.query(
-      "SELECT rfid_uid FROM estagiarios WHERE rfid_uid IS NOT NULL AND rfid_uid != ''"
-    );
-    
-    const uidsCadastrados = estagiarios.map(e => e.rfid_uid);
-    
-    res.json({
-      sucesso: true,
-      uids_cadastrados: uidsCadastrados,
-      total_cadastrados: uidsCadastrados.length
-    });
-    
-  } catch (err) {
-    console.error("Erro ao buscar UIDs:", err);
-    res.status(500).json({
-      sucesso: false,
-      mensagem: "Erro ao buscar UIDs cadastrados"
-    });
-  }
-});
-
-// Endpoint para verificar se UID já está em uso
-app.post("/rfid/verificar-uid", async (req, res) => {
-  try {
-    const { uid } = req.body;
-    
-    if (!uid) {
-      return res.json({
-        sucesso: false,
-        mensagem: "UID não fornecido"
-      });
-    }
-
-    const [estagiarios] = await pool.query(
-      "SELECT id, nome FROM estagiarios WHERE rfid_uid = ?",
-      [uid]
-    );
-
-    if (estagiarios.length > 0) {
-      return res.json({
-        sucesso: true,
-        disponivel: false,
-        mensagem: "UID já está em uso",
-        estagiario: estagiarios[0]
-      });
-    }
-
-    res.json({
-      sucesso: true,
-      disponivel: true,
-      mensagem: "UID disponível para cadastro"
-    });
-
-  } catch (err) {
-    console.error("Erro ao verificar UID:", err);
-    res.status(500).json({
-      sucesso: false,
-      mensagem: "Erro ao verificar UID"
-    });
-  }
-});
-// ==================== FIM ENDPOINTS RFID ====================
-
 // --------------------
 // Authentication (basic)
 // --------------------
@@ -500,10 +342,7 @@ app.get("/materiais", async (req, res) => {
   try { const [rows] = await pool.query("SELECT m.*, t.nome_tipo FROM materiais m LEFT JOIN tipos_materiais t ON m.id_tipo_material = t.id ORDER BY m.id DESC"); res.json(rows); }
   catch (err) { handleError(res, err); }
 });
-app.get("/mt", async (req, res) => {
-  try { const [rows] = await pool.query("SELECT * FROM visitas ORDER BY id DESC"); res.json(rows); }
-  catch (err) { handleError(res, err); }
-});
+
 
 app.get("/materiais/:id", async (req, res) => {
   try { const [rows] = await pool.query("SELECT * FROM materiais WHERE id = ?", [req.params.id]); if (!rows.length) return res.status(404).json({ error: "Material não encontrado" }); res.json(rows[0]); }
@@ -513,6 +352,20 @@ app.get("/materiais/:id", async (req, res) => {
 app.post("/materiais", async (req, res) => {
   try { const body = clean(req.body); const [result] = await pool.query("INSERT INTO materiais SET ?", [body]); const [row] = await pool.query("SELECT * FROM materiais WHERE id = ?", [result.insertId]); res.status(201).json(row[0]); }
   catch (err) { handleError(res, err); }
+});
+app.get("/add_materiais", async (req, res) => {
+  try {
+    const valores = [];
+
+    const [result] = await pool.query(
+      "INSERT INTO tipos_materiais (nome_tipo) VALUES ?",
+      [valores.map(v => [v.nome_tipo])]
+    );
+
+    res.send(`Inserção concluída! Registros inseridos: ${result.affectedRows}`);
+  } catch (err) {
+    handleError(res, err);
+  }
 });
 
 app.put("/materiais/:id", async (req, res) => {
@@ -525,8 +378,12 @@ app.delete("/materiais/:id", async (req, res) => {
   catch (err) { handleError(res, err); }
 });
 
-app.get("/materiais/tipos", async (req, res) => {
+app.get("/materiais/tipo", async (req, res) => {
   try { const [rows] = await pool.query("SELECT * FROM tipos_materiais ORDER BY id"); res.json(rows); }
+  catch (err) { handleError(res, err); }
+});
+app.get("/", async (req, res) => {
+  try { const [rows] = await pool.query("SELECT * FROM tipos_materiais ORDER BY id DESC"); res.json(rows); }
   catch (err) { handleError(res, err); }
 });
 
