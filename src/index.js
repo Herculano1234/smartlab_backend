@@ -108,6 +108,7 @@ app.get("/tabelas", async (req, res) => {
     });
   }
 });
+
 // --------------------
 // Authentication (basic)
 // --------------------
