@@ -135,6 +135,302 @@ app.post("/rfid/verificar-acesso", async (req, res) => {
     const hoje = new Date().toISOString().split('T')[0];
     const agora = new Date().toTimeString().split(' ')[0];
 
+    
+    // ==================== ENDPOINTS PRESENÇA MANUAL ====================
+
+// Endpoint para registrar presença manualmente (via sistema web)
+app.post("/presencas/registrar", async (req, res) => {
+  try {
+    const { uid, tipo } = req.body;
+    
+    if (!uid) {
+      return res.status(400).json({
+        sucesso: false,
+        mensagem: "UID do cartão RFID é obrigatório"
+      });
+    }
+
+    console.log(`📝 Registrando presença manual para UID: ${uid}, Tipo: ${tipo}`);
+
+    // Busca estagiário pelo UID
+    const [estagiarios] = await pool.query(
+      "SELECT id, nome, email, numero_processo, curso FROM estagiarios WHERE rfid_uid = ?",
+      [uid.trim()]
+    );
+
+    if (estagiarios.length === 0) {
+      return res.status(404).json({
+        sucesso: false,
+        mensagem: "Cartão não cadastrado no sistema"
+      });
+    }
+
+    const estagiario = estagiarios[0];
+    const hoje = new Date().toISOString().split('T')[0];
+    const agora = new Date().toTimeString().split(' ')[0];
+
+    let resultado;
+    let mensagem = "";
+
+    if (tipo === "ENTRADA" || !tipo) {
+      // Registrar ENTRADA
+      resultado = await registrarEntrada(estagiario.id, hoje, agora);
+      mensagem = "Entrada registrada com sucesso";
+    } else if (tipo === "SAIDA") {
+      // Registrar SAÍDA
+      resultado = await registrarSaida(estagiario.id, hoje, agora);
+      mensagem = "Saída registrada com sucesso";
+    } else {
+      // Registro automático (como o RFID)
+      resultado = await registroAutomatico(estagiario.id, hoje, agora);
+      mensagem = `Presença ${resultado.tipo} registrada com sucesso`;
+    }
+
+    console.log(`✅ ${mensagem} para: ${estagiario.nome}`);
+
+    res.json({
+      sucesso: true,
+      mensagem: mensagem,
+      tipo: resultado.tipo,
+      horario: agora,
+      data: hoje,
+      estagiario: {
+        id: estagiario.id,
+        nome: estagiario.nome,
+        numero_processo: estagiario.numero_processo,
+        curso: estagiario.curso
+      },
+      registro: resultado.registro
+    });
+
+  } catch (err) {
+    console.error("❌ Erro ao registrar presença:", err);
+    res.status(500).json({
+      sucesso: false,
+      mensagem: "Erro interno do servidor ao registrar presença"
+    });
+  }
+});
+
+// Endpoint para registro rápido de presença (apenas UID)
+app.post("/presencas/registro-rapido", async (req, res) => {
+  try {
+    const { uid } = req.body;
+    
+    if (!uid) {
+      return res.status(400).json({
+        sucesso: false,
+        mensagem: "UID do cartão é obrigatório"
+      });
+    }
+
+    console.log(`⚡ Registro rápido de presença para UID: ${uid}`);
+
+    // Busca estagiário
+    const [estagiarios] = await pool.query(
+      "SELECT id, nome FROM estagiarios WHERE rfid_uid = ?",
+      [uid.trim()]
+    );
+
+    if (estagiarios.length === 0) {
+      return res.status(404).json({
+        sucesso: false,
+        mensagem: "Cartão não cadastrado"
+      });
+    }
+
+    const estagiario = estagiarios[0];
+    const hoje = new Date().toISOString().split('T')[0];
+    const agora = new Date().toTimeString().split(' ')[0];
+
+    const resultado = await registroAutomatico(estagiario.id, hoje, agora);
+
+    res.json({
+      sucesso: true,
+      mensagem: `Presença ${resultado.tipo} registrada`,
+      tipo: resultado.tipo,
+      horario: agora,
+      estagiario: {
+        id: estagiario.id,
+        nome: estagiario.nome
+      }
+    });
+
+  } catch (err) {
+    console.error("❌ Erro no registro rápido:", err);
+    res.status(500).json({
+      sucesso: false,
+      mensagem: "Erro ao registrar presença"
+    });
+  }
+});
+
+// Endpoint para obter presenças do dia atual
+app.get("/presencas/hoje", async (req, res) => {
+  try {
+    const hoje = new Date().toISOString().split('T')[0];
+    
+    const [presencas] = await pool.query(
+      `SELECT p.*, e.nome, e.numero_processo, e.curso, e.rfid_uid
+       FROM presencas p 
+       JOIN estagiarios e ON p.estagiario_id = e.id 
+       WHERE p.data = ? 
+       ORDER BY p.hora_entrada DESC`,
+      [hoje]
+    );
+
+    res.json({
+      sucesso: true,
+      data: hoje,
+      total_presencas: presencas.length,
+      presencas: presencas
+    });
+
+  } catch (err) {
+    console.error("❌ Erro ao buscar presenças de hoje:", err);
+    res.status(500).json({
+      sucesso: false,
+      mensagem: "Erro ao buscar presenças do dia"
+    });
+  }
+});
+
+// Endpoint para obter histórico de presenças por estagiário
+app.get("/presencas/estagiario/:rfidUid", async (req, res) => {
+  try {
+    const { rfidUid } = req.params;
+    const { limite = 30 } = req.query;
+
+    const [estagiarios] = await pool.query(
+      "SELECT id, nome FROM estagiarios WHERE rfid_uid = ?",
+      [rfidUid]
+    );
+
+    if (estagiarios.length === 0) {
+      return res.status(404).json({
+        sucesso: false,
+        mensagem: "Estagiário não encontrado"
+      });
+    }
+
+    const estagiario = estagiarios[0];
+
+    const [presencas] = await pool.query(
+      `SELECT * FROM presencas 
+       WHERE estagiario_id = ? 
+       ORDER BY data DESC, hora_entrada DESC 
+       LIMIT ?`,
+      [estagiario.id, parseInt(limite)]
+    );
+
+    res.json({
+      sucesso: true,
+      estagiario: {
+        id: estagiario.id,
+        nome: estagiario.nome
+      },
+      total_registros: presencas.length,
+      presencas: presencas
+    });
+
+  } catch (err) {
+    console.error("❌ Erro ao buscar histórico:", err);
+    res.status(500).json({
+      sucesso: false,
+      mensagem: "Erro ao buscar histórico de presenças"
+    });
+  }
+});
+
+// ==================== FUNÇÕES AUXILIARES ====================
+
+/**
+ * Registra entrada do estagiário
+ */
+async function registrarEntrada(estagiarioId, data, horario) {
+  // Verifica se já existe uma entrada sem saída no mesmo dia
+  const [presencasAbertas] = await pool.query(
+    "SELECT id FROM presencas WHERE estagiario_id = ? AND data = ? AND hora_saida IS NULL",
+    [estagiarioId, data]
+  );
+
+  if (presencasAbertas.length > 0) {
+    throw new Error("Já existe uma entrada registrada sem saída para hoje");
+  }
+
+  // Registra nova entrada
+  const [result] = await pool.query(
+    "INSERT INTO presencas (estagiario_id, data, hora_entrada) VALUES (?, ?, ?)",
+    [estagiarioId, data, horario]
+  );
+
+  return {
+    tipo: "ENTRADA",
+    registro: { id: result.insertId, hora_entrada: horario }
+  };
+}
+
+/**
+ * Registra saída do estagiário
+ */
+async function registrarSaida(estagiarioId, data, horario) {
+  // Busca a última entrada sem saída
+  const [presencasAbertas] = await pool.query(
+    "SELECT id, hora_entrada FROM presencas WHERE estagiario_id = ? AND data = ? AND hora_saida IS NULL ORDER BY hora_entrada DESC LIMIT 1",
+    [estagiarioId, data]
+  );
+
+  if (presencasAbertas.length === 0) {
+    throw new Error("Não há entrada registrada para registrar saída");
+  }
+
+  const presenca = presencasAbertas[0];
+
+  // Atualiza com a saída
+  await pool.query(
+    "UPDATE presencas SET hora_saida = ? WHERE id = ?",
+    [horario, presenca.id]
+  );
+
+  return {
+    tipo: "SAIDA",
+    registro: { 
+      id: presenca.id, 
+      hora_entrada: presenca.hora_entrada, 
+      hora_saida: horario 
+    }
+  };
+}
+
+/**
+ * Registro automático (entrada/saída alternada)
+ */
+async function registroAutomatico(estagiarioId, data, horario) {
+  // Busca o último registro do dia
+  const [ultimasPresencas] = await pool.query(
+    "SELECT id, hora_entrada, hora_saida FROM presencas WHERE estagiario_id = ? AND data = ? ORDER BY hora_entrada DESC LIMIT 1",
+    [estagiarioId, data]
+  );
+
+  if (ultimasPresencas.length === 0) {
+    // Primeira entrada do dia
+    const resultado = await registrarEntrada(estagiarioId, data, horario);
+    return resultado;
+  }
+
+  const ultimaPresenca = ultimasPresencas[0];
+
+  if (!ultimaPresenca.hora_saida) {
+    // Tem entrada mas não tem saída - registrar saída
+    const resultado = await registrarSaida(estagiarioId, data, horario);
+    return resultado;
+  } else {
+    // Já registrou entrada e saída - nova entrada
+    const resultado = await registrarEntrada(estagiarioId, data, horario);
+    return resultado;
+  }
+}
+
     // Verifica se já existe registro de presença hoje
     const [presencas] = await pool.query(
       "SELECT * FROM presencas WHERE estagiario_id = ? AND data = ? ORDER BY id DESC LIMIT 1",
