@@ -116,6 +116,17 @@ CREATE TABLE IF NOT EXISTS presencas (
     REFERENCES estagiarios(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE IF NOT EXISTS marcar_presencas (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  estagiario_id INT NOT NULL,
+  data DATE NOT NULL,
+  hora_entrada TIME,
+  hora_saida TIME,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (estagiario_id) REFERENCES estagiarios(id) ON DELETE CASCADE,
+  UNIQUE KEY unique_entrada_diaria (estagiario_id, data, hora_entrada)
+);
+
 -- ===========================
 -- TABELA: Histórico de Estado do Estágio
 -- ===========================
