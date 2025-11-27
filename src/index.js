@@ -6,7 +6,7 @@ import mysql from "mysql2/promise";
 import bcrypt from "bcryptjs";
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
+import { fileURLToPath } from "url"; 
 dotenv.config();
 const app = express();
 app.use(cors());
