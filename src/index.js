@@ -199,7 +199,7 @@ app.get("/estagiarios/:id", async (req, res) => {
 app.post("/estagiarios", async (req, res) => {
   try {
     const body = clean(req.body);
-    // Accept photo sent as 'fotoPerfil' from frontend and map to 'foto' DB column
+    // Accept photo sent as 'fotoPerfil' from frontend and ma  to 'foto' DB column
     if (body.fotoPerfil) {
       body.foto = body.fotoPerfil;
       delete body.fotoPerfil;

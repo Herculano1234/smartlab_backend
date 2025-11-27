@@ -139,4 +139,22 @@ CREATE TABLE IF NOT EXISTS logs (
   acao TEXT,
   data_hora TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+-- ===========================
+-- TABELA: Relatórios
+-- ===========================
+CREATE TABLE IF NOT EXISTS relatorios (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  titulo VARCHAR(150) NOT NULL,
+  conteudo TEXT NOT NULL,
+  data_envio DATE NOT NULL,
+  status ENUM('Pendente', 'Aprovado', 'Revisado') DEFAULT 'Pendente',
+  id_estagiario INT NOT NULL,
+  id_professor INT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_relatorios_estagiario FOREIGN KEY (id_estagiario)
+    REFERENCES estagiarios(id) ON DELETE CASCADE,
+  CONSTRAINT fk_relatorios_professor FOREIGN KEY (id_professor)
+    REFERENCES professores(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- FIM DO SCRIPT SQL PARA INICIALIZAÇÃO DO BANCO DE DADOS
