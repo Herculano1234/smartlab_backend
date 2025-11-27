@@ -187,6 +187,36 @@ app.get("/estagiarios", async (req, res) => {
     res.json(rows);
   } catch (err) { handleError(res, err); }
 });
+app.get("/estagiariosf", async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT 
+        id,
+        nome,
+        data_nascimento,
+        genero,
+        morada,
+        telefone,
+        email,
+        escola_origem,
+        numero_processo,
+        curso,
+        turma,
+        area_de_estagio,
+        codigo_rfid,
+        estado_estagio,
+        data_inicio_estado,
+        id_professor,
+        password_hash,
+        created_at
+      FROM estagiarios
+      ORDER BY id DESC
+    `);
+    res.json(rows);
+  } catch (err) {
+    handleError(res, err);
+  }
+});
 
 app.get("/estagiarios/:id", async (req, res) => {
   try {
