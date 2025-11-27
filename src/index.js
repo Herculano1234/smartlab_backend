@@ -467,6 +467,53 @@ app.delete("/emprestimos/:id", async (req, res) => {
 });
 
 // --------------------
+// Estágios (derivado de estagiarios)
+// --------------------
+app.get('/estagios', async (req, res) => {
+  try {
+    // Deriva estágios a partir da tabela estagiarios
+    const [rows] = await pool.query(`
+      SELECT id, nome AS nome_estagiario, numero_processo AS processo, curso, turma, area_de_estagio AS area, estado_estagio AS status, data_inicio_estado AS data_inicio
+      FROM estagiarios
+      ORDER BY id DESC
+    `);
+    res.json(rows);
+  } catch (err) { handleError(res, err); }
+});
+
+app.get('/estagios/:id', async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT id, nome AS nome_estagiario, numero_processo AS processo, curso, turma, area_de_estagio AS area, estado_estagio AS status, data_inicio_estado AS data_inicio
+      FROM estagiarios
+      WHERE id = ?
+    `, [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Estágio não encontrado' });
+    res.json(rows[0]);
+  } catch (err) { handleError(res, err); }
+});
+
+// Start an estágio: mark estagiario.estado_estagio = 'Ativo' and set data_inicio_estado
+app.post('/estagios/:id/start', async (req, res) => {
+  try {
+    const [result] = await pool.query('UPDATE estagiarios SET estado_estagio = ?, data_inicio_estado = CURRENT_DATE() WHERE id = ?', ['Ativo', req.params.id]);
+    if (result.affectedRows === 0) return res.status(404).json({ error: 'Estagiário não encontrado' });
+    const [rows] = await pool.query('SELECT id, nome AS nome_estagiario, numero_processo AS processo, curso, turma, area_de_estagio AS area, estado_estagio AS status, data_inicio_estado AS data_inicio FROM estagiarios WHERE id = ?', [req.params.id]);
+    res.json(rows[0]);
+  } catch (err) { handleError(res, err); }
+});
+
+// Finish an estágio: mark estado_estagio = 'Concluído' (and clear data_inicio_estado)
+app.post('/estagios/:id/finish', async (req, res) => {
+  try {
+    const [result] = await pool.query('UPDATE estagiarios SET estado_estagio = ?, data_inicio_estado = NULL WHERE id = ?', ['Concluído', req.params.id]);
+    if (result.affectedRows === 0) return res.status(404).json({ error: 'Estagiário não encontrado' });
+    const [rows] = await pool.query('SELECT id, nome AS nome_estagiario, numero_processo AS processo, curso, turma, area_de_estagio AS area, estado_estagio AS status, data_inicio_estado AS data_inicio FROM estagiarios WHERE id = ?', [req.params.id]);
+    res.json(rows[0]);
+  } catch (err) { handleError(res, err); }
+});
+
+// --------------------
 // Presenças
 // --------------------
 app.get("/presencas", async (req, res) => {
