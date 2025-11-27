@@ -52,6 +52,22 @@ await initDatabase();
 // --------------------
 // Helpers
 // --------------------
+let lastRfidCode = null; // variável em memória que guarda o último código
+
+// Endpoint que o ESP32 chama para enviar o código RFID
+app.post('/rfid', (req, res) => {
+  const { code } = req.body;
+  if (!code) return res.status(400).json({ error: 'code é obrigatório' });
+
+  lastRfidCode = code;
+  console.log('RFID recebido:', code);
+  return res.json({ ok: true });
+});
+
+// Endpoint que o frontend chama para obter o último código
+app.get('/rfid', (req, res) => {
+  return res.json({ code: lastRfidCode });
+});
 const handleError = (res, err) => {
   console.error(err);
   return res.status(500).json({ error: "Internal server error" });
