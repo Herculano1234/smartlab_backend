@@ -428,13 +428,20 @@ app.post("/materiais/tipos", async (req, res) => {
 // --------------------
 app.get("/emprestimos", async (req, res) => {
   try {
-    const [rows] = await pool.query(
-      `SELECT e.*, m.nome_material, m.code_id, est.nome AS estagiario_nome
+    const limit = req.query.limit ? parseInt(req.query.limit, 10) : null;
+    const offset = req.query.offset ? parseInt(req.query.offset, 10) : 0;
+    const baseQuery = `SELECT e.*, m.nome_material, m.code_id, est.nome AS estagiario_nome
        FROM emprestimos e
        LEFT JOIN materiais m ON e.id_material = m.id
-       LEFT JOIN estagiarios est ON e.id_estagiario = est.id
-       ORDER BY e.data_inicio DESC`
-    );
+       LEFT JOIN estagiarios est ON e.id_estagiario = est.id`;
+
+    if (limit && limit > 0) {
+      const [[{ total }]] = await pool.query('SELECT COUNT(*) AS total FROM emprestimos');
+      const [rows] = await pool.query(baseQuery + ' ORDER BY e.data_inicio DESC LIMIT ? OFFSET ?', [limit, offset]);
+      return res.json({ total, rows });
+    }
+
+    const [rows] = await pool.query(baseQuery + ' ORDER BY e.data_inicio DESC');
     res.json(rows);
   } catch (err) { handleError(res, err); }
 });
@@ -442,6 +449,42 @@ app.get("/emprestimos", async (req, res) => {
 app.get("/emprestimos/:id", async (req, res) => {
   try { const [rows] = await pool.query("SELECT * FROM emprestimos WHERE id = ?", [req.params.id]); if (!rows.length) return res.status(404).json({ error: "Empréstimo não encontrado" }); res.json(rows[0]); }
   catch (err) { handleError(res, err); }
+});
+
+// Registrar devolução: marca status = 'Devolvido' e define data_final = CURRENT_DATE()
+app.post('/emprestimos/:id/devolver', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const [result] = await pool.query("UPDATE emprestimos SET status = 'Devolvido', data_final = CURRENT_DATE() WHERE id = ?", [id]);
+    if (result.affectedRows === 0) return res.status(404).json({ error: 'Empréstimo não encontrado' });
+    const [rows] = await pool.query(
+      `SELECT e.*, m.nome_material, m.code_id, est.nome AS estagiario_nome
+       FROM emprestimos e
+       LEFT JOIN materiais m ON e.id_material = m.id
+       LEFT JOIN estagiarios est ON e.id_estagiario = est.id
+       WHERE e.id = ?`, [id]
+    );
+    res.json(rows[0]);
+  } catch (err) { handleError(res, err); }
+});
+
+// Renovar prazo: opcionalmente recebe { days } e atualiza data_final para CURRENT_DATE() + days
+app.post('/emprestimos/:id/renovar', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const days = req.body && req.body.days ? parseInt(req.body.days, 10) : 7;
+    // Na tabela existe apenas data_final (data de retorno); vamos setar data_final = DATE_ADD(CURRENT_DATE(), INTERVAL ? DAY) e manter status 'Em uso'
+    const [result] = await pool.query("UPDATE emprestimos SET status = 'Em uso', data_final = DATE_ADD(CURRENT_DATE(), INTERVAL ? DAY) WHERE id = ?", [days, id]);
+    if (result.affectedRows === 0) return res.status(404).json({ error: 'Empréstimo não encontrado' });
+    const [rows] = await pool.query(
+      `SELECT e.*, m.nome_material, m.code_id, est.nome AS estagiario_nome
+       FROM emprestimos e
+       LEFT JOIN materiais m ON e.id_material = m.id
+       LEFT JOIN estagiarios est ON e.id_estagiario = est.id
+       WHERE e.id = ?`, [id]
+    );
+    res.json(rows[0]);
+  } catch (err) { handleError(res, err); }
 });
 
 app.post("/emprestimos", async (req, res) => {
