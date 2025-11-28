@@ -5,11 +5,28 @@ import mysql from "mysql2/promise";
 import bcrypt from "bcryptjs";
 import fs from "fs";
 import path from "path";
+import multer from "multer";
 import { fileURLToPath } from "url";
 dotenv.config();
 const app = express();
 app.use(cors());
-app.use(express.json());
+// Allow larger JSON bodies for non-file endpoints (safe moderate limit)
+app.use(express.json({ limit: '10mb' }));
+
+// Prepare uploads directory and static serving for uploaded files
+const uploadDir = path.join(__dirname, '..', 'uploads');
+fs.mkdirSync(uploadDir, { recursive: true });
+app.use('/uploads', express.static(uploadDir));
+
+// Multer setup for multipart/form-data file uploads
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, uploadDir),
+  filename: (req, file, cb) => {
+    const safeName = file.originalname.replace(/[^a-zA-Z0-9.\-_]/g, '_');
+    cb(null, `${Date.now()}-${safeName}`);
+  }
+});
+const upload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 } });
 
 // --------------------
 // MySQL (Aiven) Pool
@@ -444,18 +461,28 @@ app.get('/materiais_didaticos/:id', async (req, res) => {
   } catch (err) { handleError(res, err); }
 });
 
-app.post('/materiais_didaticos', async (req, res) => {
+app.post('/materiais_didaticos', upload.single('file'), async (req, res) => {
   try {
     const body = clean(req.body);
+    // If a file was uploaded, store its public path in `link`
+    if (req.file) {
+      body.link = `/uploads/${req.file.filename}`;
+    }
+    // Normalize visivel_todos
+    if (body.visivel_todos !== undefined) body.visivel_todos = body.visivel_todos ? 1 : 0;
     const [result] = await pool.query('INSERT INTO materiais_didaticos SET ?', [body]);
     const [row] = await pool.query('SELECT * FROM materiais_didaticos WHERE id = ?', [result.insertId]);
     res.status(201).json(row[0]);
   } catch (err) { handleError(res, err); }
 });
 
-app.put('/materiais_didaticos/:id', async (req, res) => {
+app.put('/materiais_didaticos/:id', upload.single('file'), async (req, res) => {
   try {
     const body = clean(req.body);
+    if (req.file) {
+      body.link = `/uploads/${req.file.filename}`;
+    }
+    if (body.visivel_todos !== undefined) body.visivel_todos = body.visivel_todos ? 1 : 0;
     await pool.query('UPDATE materiais_didaticos SET ? WHERE id = ?', [body, req.params.id]);
     const [row] = await pool.query('SELECT * FROM materiais_didaticos WHERE id = ?', [req.params.id]);
     res.json(row[0]);
@@ -782,48 +809,6 @@ app.delete("/grupos/:id/estagiarios/:id_estagiario", async (req, res) => {
     );
     if (result.affectedRows === 0) return res.status(404).json({ error: 'Associação não encontrada' });
     res.json({ message: 'Estagiário removido do grupo' });
-  } catch (err) {
-    handleError(res, err);
-  }
-});
-
-
-app.post("/materiais_didaticos", async (req, res) => {
-  try {
-    const { titulo, tipo, descricao, link, tema_aula, id_professor, id_grupo, visivel_todos } = req.body;
-    const [result] = await pool.query(
-      `INSERT INTO materiais_didaticos (titulo, tipo, descricao, link, tema_aula, id_professor, id_grupo, visivel_todos) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [titulo, tipo, descricao, link, tema_aula, id_professor, id_grupo, visivel_todos]
-    );
-    res.status(201).json({ message: "Material criado com sucesso", id: result.insertId });
-  } catch (err) {
-    handleError(res, err);
-  }
-});
-
-app.get("/materiais_didaticos", async (req, res) => {
-  try {
-    const { grupoId } = req.query;
-
-    let query = `
-      SELECT m.id, m.titulo, m.tipo, m.tema_aula, m.descricao, m.link, 
-             m.visivel_todos, p.nome AS professor_nome, g.nome_grupo
-      FROM materiais_didaticos m
-      LEFT JOIN professores p ON m.id_professor = p.id
-      LEFT JOIN grupos_estagio g ON m.id_grupo = g.id
-    `;
-
-    let params = [];
-    if (grupoId) {
-      query += ` WHERE m.visivel_todos = TRUE OR m.id_grupo = ?`;
-      params.push(grupoId);
-    }
-
-    query += ` ORDER BY m.created_at DESC`;
-
-    const [rows] = await pool.query(query, params);
-    res.json(rows);
   } catch (err) {
     handleError(res, err);
   }
