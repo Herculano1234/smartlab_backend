@@ -421,7 +421,7 @@ app.get('/materiais_didaticos', async (req, res) => {
   try {
     const { grupoId } = req.query;
     let query = `
-      SELECT m.id, m.titulo, m.tipo, m.tema_aula, m.descricao, m.link, m.visivel_todos, p.nome AS professor_nome, g.nome_grupo, m.id_grupo
+      SELECT m.id, m.titulo, m.tipo, m.tema_aula, m.descricao, m.link, m.arquivo, m.visivel_todos, p.nome AS professor_nome, g.nome_grupo, m.id_grupo
       FROM materiais_didaticos m
       LEFT JOIN professores p ON m.id_professor = p.id
       LEFT JOIN grupos_estagio g ON m.id_grupo = g.id
@@ -449,6 +449,15 @@ app.post('/materiais_didaticos', async (req, res) => {
   try {
     const body = clean(req.body);
     if (body.visivel_todos !== undefined) body.visivel_todos = body.visivel_todos ? 1 : 0;
+    // If the client sent a large base64 DataURL in `link`, move it to `arquivo` (LONGTEXT)
+    if (body.link && typeof body.link === 'string') {
+      try {
+        if (body.link.startsWith('data:') || body.link.length > 64000) {
+          body.arquivo = body.link;
+          delete body.link;
+        }
+      } catch (e) { /* ignore */ }
+    }
     // id_professor is required by schema
     if (!body.id_professor) return res.status(400).json({ error: 'id_professor é obrigatório' });
     // ensure numeric
@@ -463,6 +472,14 @@ app.put('/materiais_didaticos/:id', async (req, res) => {
   try {
     const body = clean(req.body);
     if (body.visivel_todos !== undefined) body.visivel_todos = body.visivel_todos ? 1 : 0;
+    if (body.link && typeof body.link === 'string') {
+      try {
+        if (body.link.startsWith('data:') || body.link.length > 64000) {
+          body.arquivo = body.link;
+          delete body.link;
+        }
+      } catch (e) { /* ignore */ }
+    }
     if (body.id_professor !== undefined && !body.id_professor) return res.status(400).json({ error: 'id_professor é obrigatório' });
     if (body.id_professor !== undefined) body.id_professor = Number(body.id_professor);
     await pool.query('UPDATE materiais_didaticos SET ? WHERE id = ?', [body, req.params.id]);
