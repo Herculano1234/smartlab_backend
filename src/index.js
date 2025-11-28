@@ -449,6 +449,10 @@ app.post('/materiais_didaticos', async (req, res) => {
   try {
     const body = clean(req.body);
     if (body.visivel_todos !== undefined) body.visivel_todos = body.visivel_todos ? 1 : 0;
+    // id_professor is required by schema
+    if (!body.id_professor) return res.status(400).json({ error: 'id_professor é obrigatório' });
+    // ensure numeric
+    body.id_professor = Number(body.id_professor);
     const [result] = await pool.query('INSERT INTO materiais_didaticos SET ?', [body]);
     const [row] = await pool.query('SELECT * FROM materiais_didaticos WHERE id = ?', [result.insertId]);
     res.status(201).json(row[0]);
@@ -459,6 +463,8 @@ app.put('/materiais_didaticos/:id', async (req, res) => {
   try {
     const body = clean(req.body);
     if (body.visivel_todos !== undefined) body.visivel_todos = body.visivel_todos ? 1 : 0;
+    if (body.id_professor !== undefined && !body.id_professor) return res.status(400).json({ error: 'id_professor é obrigatório' });
+    if (body.id_professor !== undefined) body.id_professor = Number(body.id_professor);
     await pool.query('UPDATE materiais_didaticos SET ? WHERE id = ?', [body, req.params.id]);
     const [row] = await pool.query('SELECT * FROM materiais_didaticos WHERE id = ?', [req.params.id]);
     res.json(row[0]);
