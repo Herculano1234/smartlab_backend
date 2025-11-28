@@ -182,4 +182,22 @@ CREATE TABLE IF NOT EXISTS estagiarios_grupos (
     REFERENCES grupos_estagio(id) ON DELETE CASCADE,
   UNIQUE (id_estagiario, id_grupo) -- evita duplicação
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS materiais_didaticos (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  titulo VARCHAR(150) NOT NULL,
+  tipo ENUM('Livro', 'Videoaula', 'Site', 'Slide', 'Outro') NOT NULL,
+  descricao TEXT,
+  link TEXT, -- URL de videoaula, site ou arquivo
+  arquivo LONGTEXT, -- opcional para guardar slides ou PDFs
+  tema_aula VARCHAR(150), -- tema associado
+  id_professor INT NOT NULL,
+  id_grupo INT NULL, -- se NULL, o material é visível para todos os grupos
+  visivel_todos BOOLEAN DEFAULT FALSE, -- controla se é global
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_materiais_professor FOREIGN KEY (id_professor)
+    REFERENCES professores(id) ON DELETE CASCADE,
+  CONSTRAINT fk_materiais_grupo FOREIGN KEY (id_grupo)
+    REFERENCES grupos_estagio(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 -- FIM DO SCRIPT SQL PARA INICIALIZAÇÃO DO BANCO DE DADOS

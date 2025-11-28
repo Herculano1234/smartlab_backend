@@ -737,6 +737,46 @@ app.delete("/grupos/:id/estagiarios/:id_estagiario", async (req, res) => {
 });
 
 
+app.post("/materiais_didaticos", async (req, res) => {
+  try {
+    const { titulo, tipo, descricao, link, tema_aula, id_professor, id_grupo, visivel_todos } = req.body;
+    const [result] = await pool.query(
+      `INSERT INTO materiais_didaticos (titulo, tipo, descricao, link, tema_aula, id_professor, id_grupo, visivel_todos) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [titulo, tipo, descricao, link, tema_aula, id_professor, id_grupo, visivel_todos]
+    );
+    res.status(201).json({ message: "Material criado com sucesso", id: result.insertId });
+  } catch (err) {
+    handleError(res, err);
+  }
+});
+
+app.get("/materiais_didaticos", async (req, res) => {
+  try {
+    const { grupoId } = req.query;
+
+    let query = `
+      SELECT m.id, m.titulo, m.tipo, m.tema_aula, m.descricao, m.link, 
+             m.visivel_todos, p.nome AS professor_nome, g.nome_grupo
+      FROM materiais_didaticos m
+      LEFT JOIN professores p ON m.id_professor = p.id
+      LEFT JOIN grupos_estagio g ON m.id_grupo = g.id
+    `;
+
+    let params = [];
+    if (grupoId) {
+      query += ` WHERE m.visivel_todos = TRUE OR m.id_grupo = ?`;
+      params.push(grupoId);
+    }
+
+    query += ` ORDER BY m.created_at DESC`;
+
+    const [rows] = await pool.query(query, params);
+    res.json(rows);
+  } catch (err) {
+    handleError(res, err);
+  }
+});
 
 
 // --------------------
