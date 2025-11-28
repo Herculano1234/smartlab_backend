@@ -409,13 +409,64 @@ app.delete("/materiais/:id", async (req, res) => {
   catch (err) { handleError(res, err); }
 });
 
-app.get("/materiais/tipo", async (req, res) => {
+app.get("/tipo/material", async (req, res) => {
   try { const [rows] = await pool.query("SELECT * FROM tipos_materiais ORDER BY id"); res.json(rows); }
   catch (err) { handleError(res, err); }
 });
-app.get("/", async (req, res) => {
-  try { const [rows] = await pool.query("SELECT * FROM tipos_materiais ORDER BY id DESC"); res.json(rows); }
-  catch (err) { handleError(res, err); }
+// --------------------
+// Materiais Didáticos (matérias / materiais_didaticos)
+// Expor endpoints dedicados para evitar ambiguidade com a tabela `materiais`.
+app.get('/materiais_didaticos', async (req, res) => {
+  try {
+    const { grupoId } = req.query;
+    let query = `
+      SELECT m.id, m.titulo, m.tipo, m.tema_aula, m.descricao, m.link, m.visivel_todos, p.nome AS professor_nome, g.nome_grupo, m.id_grupo
+      FROM materiais_didaticos m
+      LEFT JOIN professores p ON m.id_professor = p.id
+      LEFT JOIN grupos_estagio g ON m.id_grupo = g.id
+    `;
+    const params = [];
+    if (grupoId) {
+      query += ` WHERE m.visivel_todos = TRUE OR m.id_grupo = ?`;
+      params.push(grupoId);
+    }
+    query += ` ORDER BY m.created_at DESC`;
+    const [rows] = await pool.query(query, params);
+    res.json(rows);
+  } catch (err) { handleError(res, err); }
+});
+
+app.get('/materiais_didaticos/:id', async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT * FROM materiais_didaticos WHERE id = ?', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Material didático não encontrado' });
+    res.json(rows[0]);
+  } catch (err) { handleError(res, err); }
+});
+
+app.post('/materiais_didaticos', async (req, res) => {
+  try {
+    const body = clean(req.body);
+    const [result] = await pool.query('INSERT INTO materiais_didaticos SET ?', [body]);
+    const [row] = await pool.query('SELECT * FROM materiais_didaticos WHERE id = ?', [result.insertId]);
+    res.status(201).json(row[0]);
+  } catch (err) { handleError(res, err); }
+});
+
+app.put('/materiais_didaticos/:id', async (req, res) => {
+  try {
+    const body = clean(req.body);
+    await pool.query('UPDATE materiais_didaticos SET ? WHERE id = ?', [body, req.params.id]);
+    const [row] = await pool.query('SELECT * FROM materiais_didaticos WHERE id = ?', [req.params.id]);
+    res.json(row[0]);
+  } catch (err) { handleError(res, err); }
+});
+
+app.delete('/materiais_didaticos/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM materiais_didaticos WHERE id = ?', [req.params.id]);
+    res.json({ message: 'Material didático removido' });
+  } catch (err) { handleError(res, err); }
 });
 
 app.post("/materiais/tipos", async (req, res) => {
