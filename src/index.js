@@ -13,21 +13,6 @@ app.use(cors());
 // Allow larger JSON bodies for non-file endpoints (safe moderate limit)
 app.use(express.json({ limit: '10mb' }));
 
-// Prepare uploads directory and static serving for uploaded files
-const uploadDir = path.join(__dirname, '..', 'uploads');
-fs.mkdirSync(uploadDir, { recursive: true });
-app.use('/uploads', express.static(uploadDir));
-
-// Multer setup for multipart/form-data file uploads
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadDir),
-  filename: (req, file, cb) => {
-    const safeName = file.originalname.replace(/[^a-zA-Z0-9.\-_]/g, '_');
-    cb(null, `${Date.now()}-${safeName}`);
-  }
-});
-const upload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 } });
-
 // --------------------
 // MySQL (Aiven) Pool
 // --------------------
@@ -62,6 +47,21 @@ async function initDatabase() {
     console.error("❌ Erro ao inicializar o banco de dados:", err.message);
   }
 }
+// Prepare uploads directory and static serving for uploaded files
+const uploadDir = path.join(__dirname, '..', 'uploads');
+fs.mkdirSync(uploadDir, { recursive: true });
+app.use('/uploads', express.static(uploadDir));
+
+// Multer setup for multipart/form-data file uploads
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, uploadDir),
+  filename: (req, file, cb) => {
+    const safeName = file.originalname.replace(/[^a-zA-Z0-9.\-_]/g, '_');
+    cb(null, `${Date.now()}-${safeName}`);
+  }
+});
+const upload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 } });
+
 
 let lastRfidCode = null; // variável em memória que guarda o último código
 
