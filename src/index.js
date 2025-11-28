@@ -5,7 +5,6 @@ import mysql from "mysql2/promise";
 import bcrypt from "bcryptjs";
 import fs from "fs";
 import path from "path";
-import multer from "multer";
 import { fileURLToPath } from "url";
 dotenv.config();
 const app = express();
@@ -47,21 +46,6 @@ async function initDatabase() {
     console.error("❌ Erro ao inicializar o banco de dados:", err.message);
   }
 }
-// Prepare uploads directory and static serving for uploaded files
-const uploadDir = path.join(__dirname, '..', 'uploads');
-fs.mkdirSync(uploadDir, { recursive: true });
-app.use('/uploads', express.static(uploadDir));
-
-// Multer setup for multipart/form-data file uploads
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadDir),
-  filename: (req, file, cb) => {
-    const safeName = file.originalname.replace(/[^a-zA-Z0-9.\-_]/g, '_');
-    cb(null, `${Date.now()}-${safeName}`);
-  }
-});
-const upload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 } });
-
 
 let lastRfidCode = null; // variável em memória que guarda o último código
 
@@ -461,14 +445,9 @@ app.get('/materiais_didaticos/:id', async (req, res) => {
   } catch (err) { handleError(res, err); }
 });
 
-app.post('/materiais_didaticos', upload.single('file'), async (req, res) => {
+app.post('/materiais_didaticos', async (req, res) => {
   try {
     const body = clean(req.body);
-    // If a file was uploaded, store its public path in `link`
-    if (req.file) {
-      body.link = `/uploads/${req.file.filename}`;
-    }
-    // Normalize visivel_todos
     if (body.visivel_todos !== undefined) body.visivel_todos = body.visivel_todos ? 1 : 0;
     const [result] = await pool.query('INSERT INTO materiais_didaticos SET ?', [body]);
     const [row] = await pool.query('SELECT * FROM materiais_didaticos WHERE id = ?', [result.insertId]);
@@ -476,12 +455,9 @@ app.post('/materiais_didaticos', upload.single('file'), async (req, res) => {
   } catch (err) { handleError(res, err); }
 });
 
-app.put('/materiais_didaticos/:id', upload.single('file'), async (req, res) => {
+app.put('/materiais_didaticos/:id', async (req, res) => {
   try {
     const body = clean(req.body);
-    if (req.file) {
-      body.link = `/uploads/${req.file.filename}`;
-    }
     if (body.visivel_todos !== undefined) body.visivel_todos = body.visivel_todos ? 1 : 0;
     await pool.query('UPDATE materiais_didaticos SET ? WHERE id = ?', [body, req.params.id]);
     const [row] = await pool.query('SELECT * FROM materiais_didaticos WHERE id = ?', [req.params.id]);
