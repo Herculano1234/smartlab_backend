@@ -157,4 +157,29 @@ CREATE TABLE IF NOT EXISTS relatorios (
     REFERENCES professores(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE IF NOT EXISTS grupos_estagio (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  nome_grupo VARCHAR(100) NOT NULL,
+  dias_aulas VARCHAR(100), -- Ex: "Segunda, Quarta"
+  turno ENUM('Manhã', 'Tarde') NOT NULL, -- apenas manhã e tarde
+  id_professor INT NOT NULL,
+  id_delegado INT NULL, -- estagiário escolhido como delegado
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_grupo_professor FOREIGN KEY (id_professor)
+    REFERENCES professores(id) ON DELETE CASCADE,
+  CONSTRAINT fk_grupo_delegado FOREIGN KEY (id_delegado)
+    REFERENCES estagiarios(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS estagiarios_grupos (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  id_estagiario INT NOT NULL,
+  id_grupo INT NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_estagiario_grupo FOREIGN KEY (id_estagiario)
+    REFERENCES estagiarios(id) ON DELETE CASCADE,
+  CONSTRAINT fk_grupo_estagiario FOREIGN KEY (id_grupo)
+    REFERENCES grupos_estagio(id) ON DELETE CASCADE,
+  UNIQUE (id_estagiario, id_grupo) -- evita duplicação
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 -- FIM DO SCRIPT SQL PARA INICIALIZAÇÃO DO BANCO DE DADOS

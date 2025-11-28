@@ -619,6 +619,126 @@ app.get("/dashboard", async (req, res) => {
   } catch (err) { handleError(res, err); }
 });
 
+// Criar novo grupo de estágio
+app.post("/grupos", async (req, res) => {
+  try {
+    const { nome_grupo, dias_aulas, turno, id_professor } = req.body;
+    const [result] = await pool.query(
+      `INSERT INTO grupos_estagio (nome_grupo, dias_aulas, turno, id_professor) 
+       VALUES (?, ?, ?, ?)`,
+      [nome_grupo, dias_aulas, turno, id_professor]
+    );
+    res.status(201).json({ message: "Grupo criado com sucesso", id: result.insertId });
+  } catch (err) {
+    handleError(res, err);
+  }
+});
+
+// Listar todos os grupos de estágio
+app.get("/grupos", async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT g.id, g.nome_grupo, g.dias_aulas, g.turno, g.id_professor, p.nome AS professor_nome, g.id_delegado, d.nome AS delegado_nome
+      FROM grupos_estagio g
+      LEFT JOIN professores p ON g.id_professor = p.id
+      LEFT JOIN estagiarios d ON g.id_delegado = d.id
+      ORDER BY g.id DESC
+    `);
+    res.json(rows);
+  } catch (err) {
+    handleError(res, err);
+  }
+});
+// Adicionar estagiário a um grupo
+app.post("/grupos/:id/estagiarios", async (req, res) => {
+  try {
+    const { id_estagiario } = req.body;
+    const id_grupo = req.params.id;
+
+    await pool.query(
+      `INSERT INTO estagiarios_grupos (id_estagiario, id_grupo) VALUES (?, ?)`,
+      [id_estagiario, id_grupo]
+    );
+
+    res.status(201).json({ message: "Estagiário adicionado ao grupo" });
+  } catch (err) {
+    handleError(res, err);
+  }
+});
+// Definir delegado de um grupo
+app.put("/grupos/:id/delegado", async (req, res) => {
+  try {
+    const { id_delegado } = req.body;
+    const id_grupo = req.params.id;
+
+    await pool.query(
+      `UPDATE grupos_estagio SET id_delegado = ? WHERE id = ?`,
+      [id_delegado, id_grupo]
+    );
+
+    res.json({ message: "Delegado definido com sucesso" });
+  } catch (err) {
+    handleError(res, err);
+  }
+});
+// Transferir estagiário de um grupo para outro
+app.put("/grupos/:id_origem/transferir/:id_estagiario", async (req, res) => {
+  try {
+    const { id_destino } = req.body; // grupo de destino
+    const { id_origem, id_estagiario } = req.params;
+
+    // Remover do grupo de origem
+    await pool.query(
+      `DELETE FROM estagiarios_grupos WHERE id_estagiario = ? AND id_grupo = ?`,
+      [id_estagiario, id_origem]
+    );
+
+    // Adicionar ao grupo de destino
+    await pool.query(
+      `INSERT INTO estagiarios_grupos (id_estagiario, id_grupo) VALUES (?, ?)`,
+      [id_estagiario, id_destino]
+    );
+
+    res.json({ message: "Estagiário transferido com sucesso", id_estagiario, id_destino });
+  } catch (err) {
+    handleError(res, err);
+  }
+});
+// Listar estagiários de um grupo específico
+app.get("/grupos/:id/estagiarios", async (req, res) => {
+  try {
+    const id_grupo = req.params.id;
+    const [rows] = await pool.query(`
+      SELECT e.id, e.nome, e.numero_processo, e.curso, e.turma
+      FROM estagiarios_grupos eg
+      INNER JOIN estagiarios e ON eg.id_estagiario = e.id
+      WHERE eg.id_grupo = ?
+    `, [id_grupo]);
+
+    res.json(rows);
+  } catch (err) {
+    handleError(res, err);
+  }
+});
+
+// Remover estagiário de um grupo
+app.delete("/grupos/:id/estagiarios/:id_estagiario", async (req, res) => {
+  try {
+    const { id, id_estagiario } = req.params;
+    const [result] = await pool.query(
+      `DELETE FROM estagiarios_grupos WHERE id_grupo = ? AND id_estagiario = ?`,
+      [id, id_estagiario]
+    );
+    if (result.affectedRows === 0) return res.status(404).json({ error: 'Associação não encontrada' });
+    res.json({ message: 'Estagiário removido do grupo' });
+  } catch (err) {
+    handleError(res, err);
+  }
+});
+
+
+
+
 // --------------------
 // Start server
 // --------------------
